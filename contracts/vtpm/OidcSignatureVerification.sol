@@ -2,9 +2,13 @@
 pragma solidity ^0.8.27;
 
 // Adapted from flare-foundation/flare-vtpm-attestation @ 13d7985
-// (contracts/verifiers/OidcSignatureVerification.sol). Delta vs upstream:
-// UUPS upgradeability removed (constructor + minimal Ownable). RSA-signature
-// verification logic is UNCHANGED; verbatim original vendored at
+// (contracts/verifiers/OidcSignatureVerification.sol). Deltas vs upstream:
+// (1) UUPS upgradeability removed (constructor + minimal Ownable);
+// (2) `hasPubKey` view added — upstream keeps `pubKeys` internal with no
+//     getter, which leaves no way to tell which of Google's rotating signing
+//     keys are registered (Flare's public RPC caps eth_getLogs at 30 blocks,
+//     so the PubKeyAdded history is unreadable). Read-only addition.
+// RSA-signature verification logic is UNCHANGED; verbatim original vendored at
 // contracts/vendor/flare-vtpm-attestation/.
 import {SignatureVerificationFailed} from "../vendor/flare-vtpm-attestation/types/Common.sol";
 import {Header, RSAPubKey} from "../vendor/flare-vtpm-attestation/types/OidcStructs.sol";
@@ -35,6 +39,14 @@ contract OidcSignatureVerification is Ownable {
      */
     function tokenType() external pure returns (bytes memory) {
         return bytes("OIDC");
+    }
+
+    /**
+     * @dev True when a signing key is registered for `kid`. Lets operators diff
+     * the live JWKS against on-chain state without replaying event history.
+     */
+    function hasPubKey(bytes memory kid) external view returns (bool) {
+        return pubKeys[kid].n.length != 0;
     }
 
     /**

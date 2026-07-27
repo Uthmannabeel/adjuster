@@ -3,7 +3,7 @@
   "chainId": 114,
   "claimPayout": "0x8af8843C9F2474F0528970161bc4C1db62e3B8b9",
   "flareVtpmAttestation": "0xdf7fb88FcE2a9457a1a174845d702bF91aC8E19A",
-  "oidcVerifier": "(reused, see prior deployment record)",
+  "oidcVerifier": "0xf9b394C4583eD23A1b97f93428ea9A3e70Ad5A74",
   "deployer": "0x8CCf5387B0A6A18826B4cF1a4388F6d40dEeaF27",
   "devTeeSigner": "0xeD00E334474d1fD573b0CaD8A808ab6EF9740d45",
   "confidentialSpaceConfig": {
@@ -15,5 +15,7 @@
   },
   "poolFundedC2FLR": "5",
   "deployedAt": "2026-07-20T08:07:53.267Z",
-  "explorer": "https://coston2-explorer.flare.network/address/0x8af8843C9F2474F0528970161bc4C1db62e3B8b9"
+  "explorer": "https://coston2-explorer.flare.network/address/0x8af8843C9F2474F0528970161bc4C1db62e3B8b9",
+  "oidcVerifierReplacedAt": "2026-07-27T08:14:09.551Z",
+  "oidcVerifierPrevious": "0xE19D5180c956A9EEac4d228749a71cB165837cb9"
 }

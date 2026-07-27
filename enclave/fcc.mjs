@@ -13,6 +13,7 @@ import {
   solidityPacked,
   toUtf8Bytes,
 } from "ethers";
+import { inConfidentialSpace } from "./attestation.mjs";
 
 export const SUBMISSION_TAG = "submit";
 export const STATUS_SUCCESS = 1;
@@ -28,8 +29,21 @@ const SETTLEMENT_ABI = [
   "uint64",  // takenAt — photo capture time, unix seconds (0 when absent)
 ];
 
-/** The enclave's TEE signing identity. Ephemeral unless TEE_SIGNING_KEY is set. */
+/**
+ * The enclave's TEE signing identity.
+ *
+ * Inside Confidential Space the key is ALWAYS generated in-enclave and never
+ * leaves it — nobody, including whoever runs the VM, can sign as this enclave.
+ * The image's launch policy backs this up: TEE_SIGNING_KEY is not in the
+ * allow_env_override list, so it cannot be injected at deploy time. The key
+ * earns its authority by attesting on-chain (see attest.mjs), not by an owner
+ * vouching for it.
+ *
+ * Outside Confidential Space, TEE_SIGNING_KEY gives local development a stable
+ * address — one registered as a dev signer, which settlements label loudly.
+ */
 export function teeWallet() {
+  if (inConfidentialSpace()) return Wallet.createRandom();
   const pk = process.env.TEE_SIGNING_KEY;
   return pk ? new Wallet(pk) : Wallet.createRandom();
 }

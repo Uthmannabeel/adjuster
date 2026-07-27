@@ -32,6 +32,40 @@ export async function perceptualHash(buf: Buffer): Promise<string> {
   return bitsToHex(bits);
 }
 
+/** Number of set bits in a 16-hex-char fingerprint. */
+export function bitCount(phash: string): number {
+  let ones = 0;
+  for (const char of phash) {
+    let nibble = parseInt(char, 16);
+    while (nibble) {
+      ones += nibble & 1;
+      nibble >>= 1;
+    }
+  }
+  return ones;
+}
+
+/**
+ * True when a fingerprint carries too little information to compare.
+ *
+ * An image with no texture at the 9x8 scale — a dark frame, a blank wall, a
+ * smooth gradient — makes nearly every neighbour comparison agree, so its
+ * fingerprint sits at the all-zeros or all-ones pole. Any two fingerprints
+ * with k set bits are at most 2k apart, so once 2k falls inside the near-match
+ * threshold, ALL such images "match" each other by construction regardless of
+ * content.
+ *
+ * This matters twice over: it would accuse an honest claimant of recycling a
+ * photo they never saw, and it hands a fraudster an escape hatch — submit a
+ * featureless image to every policy and reuse detection can never fire.
+ *
+ * MUST stay in sync with enclave/hash.mjs.
+ */
+export function isDegeneratePerceptualHash(phash: string, nearMatchMaxDistance = 10): boolean {
+  const ones = bitCount(phash);
+  return Math.min(ones, 64 - ones) * 2 <= nearMatchMaxDistance;
+}
+
 /** Dimensions of an image, or nulls if not decodable as one. */
 export async function imageDimensions(
   buf: Buffer,

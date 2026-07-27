@@ -21,35 +21,59 @@ function toDms(dec) {
   return `${d}/1 ${m}/1 ${s}/100`;
 }
 
-// Structured per-seed scene (gradient + blocks) — unlike noise, structure
-// survives JPEG re-encoding, so perceptual near-matching works like it does
-// on real photographs.
+// Structured per-seed scene — unlike noise, structure survives JPEG
+// re-encoding, so perceptual near-matching behaves as it does on real photos.
+//
+// The scene MUST carry contrast at the fingerprint's own scale. dHash downsamples
+// to 9x8 and compares each cell with its right neighbour, so a smooth gradient
+// makes every comparison agree and collapses to an all-zeros or all-ones hash —
+// which then "matches" every other flat image. Earlier versions of this
+// generator did exactly that: half the seeds produced byte-identical
+// fingerprints. The luminance of each of the 9x8 cells is therefore randomised
+// per seed, and softer decoration is layered on top for realism.
 const rng = (n) => {
   // splitmix-style per-seed mixing so nearby seeds produce unrelated scenes
   let x = (seed * 0x9e3779b9 + n * 0x85ebca6b) >>> 0;
   x ^= x >>> 16; x = (x * 0x45d9f3b) >>> 0; x ^= x >>> 16;
   return x / 0xffffffff;
 };
-const nBlocks = 8 + Math.floor(rng(1) * 7);
+
+const COLS = 9;
+const ROWS = 8;
+const CELL_W = 320 / COLS;
+const CELL_H = 240 / ROWS;
+
+// One randomised cell per fingerprint sample point — this is what gives the
+// fingerprint its entropy.
+const cells = Array.from({ length: COLS * ROWS }, (_, i) => {
+  const col = i % COLS;
+  const row = Math.floor(i / COLS);
+  // Spread across the full range so neighbouring comparisons go both ways.
+  const level = Math.floor(30 + rng(i * 3 + 200) * 200);
+  const tintR = Math.floor(level * (0.75 + rng(i * 3 + 201) * 0.5));
+  const tintB = Math.floor(level * (0.75 + rng(i * 3 + 202) * 0.5));
+  return `<rect x="${(col * CELL_W).toFixed(2)}" y="${(row * CELL_H).toFixed(2)}"`
+    + ` width="${(CELL_W + 0.5).toFixed(2)}" height="${(CELL_H + 0.5).toFixed(2)}"`
+    + ` fill="rgb(${Math.min(255, tintR)},${level},${Math.min(255, tintB)})"/>`;
+}).join("");
+
+// Larger shapes on top: scene-like structure, low enough opacity that it does
+// not wash the per-cell contrast back out.
+const nBlocks = 5 + Math.floor(rng(1) * 5);
 const blocks = Array.from({ length: nBlocks }, (_, i) => {
   const x = Math.floor(rng(i * 5 + 10) * 280) - 20;
   const y = Math.floor(rng(i * 5 + 11) * 220) - 20;
-  const w = 20 + Math.floor(rng(i * 5 + 12) * 140);
-  const h = 15 + Math.floor(rng(i * 5 + 13) * 110);
+  const w = 20 + Math.floor(rng(i * 5 + 12) * 120);
+  const h = 15 + Math.floor(rng(i * 5 + 13) * 90);
   const r = Math.floor(rng(i * 5 + 14) * 255);
   const g = Math.floor(rng(i * 7 + 15) * 255);
   const b = Math.floor(rng(i * 11 + 16) * 255);
-  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="rgb(${r},${g},${b})"/>`;
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}"`
+    + ` fill="rgb(${r},${g},${b})" fill-opacity="0.45"/>`;
 }).join("");
-// Gradient direction + palette fully seed-dependent (dHash is gradient-sensitive).
-const gx = [0, 1, 0, 1, 0.5][Math.floor(rng(2) * 5)];
-const gy = [0, 0, 1, 1, 0][Math.floor(rng(3) * 5)];
-const svg = `<svg width="320" height="240" xmlns="http://www.w3.org/2000/svg">
-  <defs><linearGradient id="g" x1="${gx}" y1="${gy}" x2="${1 - gx}" y2="${1 - gy}">
-    <stop offset="0" stop-color="rgb(${Math.floor(rng(90) * 255)},${Math.floor(rng(91) * 255)},${Math.floor(rng(92) * 255)})"/>
-    <stop offset="1" stop-color="rgb(${Math.floor(rng(93) * 255)},${Math.floor(rng(94) * 255)},${Math.floor(rng(95) * 255)})"/>
-  </linearGradient></defs>
-  <rect width="320" height="240" fill="url(#g)"/>${blocks}</svg>`;
+
+const svg = `<svg width="320" height="240" xmlns="http://www.w3.org/2000/svg">`
+  + `${cells}${blocks}</svg>`;
 
 const jpeg = await sharp(Buffer.from(svg))
   .jpeg({ quality: 92 })

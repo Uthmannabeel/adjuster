@@ -14,6 +14,7 @@ import { fetchAttestationToken, decodeClaims, inConfidentialSpace } from "./atte
 import { extractExif } from "./exif.mjs";
 import { runClaimChecks } from "./claim.mjs";
 import { encodeSettlement, signActionResult, teeWallet } from "./fcc.mjs";
+import { attestationWallet, startAttestationLoop } from "./attest.mjs";
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const TEE_WALLET = teeWallet();
@@ -36,6 +37,14 @@ async function readPolicyFromChain(contractAddr, policyId) {
   if (p.holder === ZERO_ADDRESS) throw new Error(`policy ${policyId} does not exist on ${contractAddr}`);
   return { lat: Number(p.lat), lon: Number(p.lon), date: p.date };
 }
+
+// Keeps this enclave's vTPM quote registered on Flare so ClaimPayout accepts
+// its settlements on attestation alone. No-op outside Confidential Space.
+const ATTESTATION = startAttestationLoop({
+  wallet: attestationWallet(TEE_WALLET.privateKey, FLARE_RPC),
+  vtpmAddress: process.env.FLARE_VTPM_ADDRESS ?? null,
+  audience: process.env.ATTESTATION_AUDIENCE ?? "proof-of-real-verifier",
+});
 
 const PORT = Number(process.env.PORT ?? 8080);
 const REGISTRY_URL = (process.env.REGISTRY_URL ?? "http://localhost:3000").replace(/\/$/, "");
@@ -76,6 +85,30 @@ function readBody(req) {
     req.on("end", () => resolve(Buffer.concat(chunks)));
     req.on("error", reject);
   });
+}
+
+/**
+ * What this enclave can prove about itself for one verified file: the Google
+ * attestation token bound to the file's hash, plus whether Flare currently
+ * holds a valid vTPM quote for the key that signed the verdict.
+ */
+async function enclaveProof(sha) {
+  const token = await fetchAttestationToken(AUDIENCE, sha);
+  const claims = token ? decodeClaims(token) : null;
+  return {
+    attested: Boolean(token),
+    inConfidentialSpace: inConfidentialSpace(),
+    nonceBound: Boolean(token),
+    hwModel: claims?.hwmodel ?? null,
+    swName: claims?.swname ?? null,
+    imageDigest: claims?.submods?.container?.image_digest ?? null,
+    issuedAt: claims?.iat ? new Date(claims.iat * 1000).toISOString() : null,
+    token,
+    teeAddress: TEE_WALLET.address,
+    onChainAttested: ATTESTATION.onChain,
+    attestationExpiresAt: ATTESTATION.expiresAt,
+    attestationTx: ATTESTATION.lastTxHash,
+  };
 }
 
 /** Same verdict rules as the registry's verifyMedia. */
@@ -133,18 +166,7 @@ async function handleVerify(req, res) {
   const verdict = classify(lookup.data.exact, lookup.data.near);
 
   // Attestation bound to this exact file via nonce = SHA-256.
-  const token = await fetchAttestationToken(AUDIENCE, sha);
-  const claims = token ? decodeClaims(token) : null;
-  const enclave = {
-    attested: Boolean(token),
-    inConfidentialSpace: inConfidentialSpace(),
-    nonceBound: Boolean(token),
-    hwModel: claims?.hwmodel ?? null,
-    swName: claims?.swname ?? null,
-    imageDigest: claims?.submods?.container?.image_digest ?? null,
-    issuedAt: claims?.iat ? new Date(claims.iat * 1000).toISOString() : null,
-    token,
-  };
+  const enclave = await enclaveProof(sha);
 
   return json(res, 200, { success: true, data: { ...verdict, enclave } });
 }
@@ -235,7 +257,7 @@ async function handleClaim(req, res, url) {
     maxKm: q.get("maxKm") ? Number(q.get("maxKm")) : undefined,
     windowDays: q.get("windowDays") ? Number(q.get("windowDays")) : undefined,
   };
-  const verdict = runClaimChecks(exif, policy, lookup.data);
+  const verdict = runClaimChecks(exif, policy, lookup.data, phash);
 
   // Record the evidence fingerprint (hash only — never the image) so future
   // claims reusing this photo are caught. Non-fatal if the registry declines.
@@ -252,18 +274,7 @@ async function handleClaim(req, res, url) {
   }
 
   // Attestation bound to this exact file via nonce = SHA-256.
-  const token = await fetchAttestationToken(AUDIENCE, sha);
-  const claims = token ? decodeClaims(token) : null;
-  const enclave = {
-    attested: Boolean(token),
-    inConfidentialSpace: inConfidentialSpace(),
-    nonceBound: Boolean(token),
-    hwModel: claims?.hwmodel ?? null,
-    swName: claims?.swname ?? null,
-    imageDigest: claims?.submods?.container?.image_digest ?? null,
-    issuedAt: claims?.iat ? new Date(claims.iat * 1000).toISOString() : null,
-    token,
-  };
+  const enclave = await enclaveProof(sha);
 
   // Sign the settlement in the FCC ActionResult wire format.
   const resultData = encodeSettlement({
@@ -309,6 +320,7 @@ const server = createServer(async (req, res) => {
           inConfidentialSpace: inConfidentialSpace(),
           registry: REGISTRY_URL,
           teeAddress: TEE_WALLET.address,
+          attestation: ATTESTATION,
         },
       });
     }

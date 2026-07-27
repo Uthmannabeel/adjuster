@@ -134,3 +134,59 @@ describe("runClaimChecks", () => {
     expect(strict.eligible).toBe(false);
   });
 });
+
+// A featureless image (dark frame, blank wall) fingerprints to the same value
+// as every other featureless image, so a near-match against one is meaningless.
+const FLAT_PHASH = "0000000000000000";
+const DETAILED_PHASH = "53393132e2b7cb59";
+
+describe("uncomparable evidence", () => {
+  const nearMatch = {
+    exact: null,
+    near: {
+      record: { title: "Claim evidence — policy #5", registrant: "adjuster:policy:5" },
+      distance: 2,
+    },
+  };
+
+  it("does not accuse a claimant of reuse on a near-match it cannot trust", () => {
+    const v = runClaimChecks(GOOD_EXIF, { ...POLICY, policyId: 9 }, nearMatch, FLAT_PHASH);
+
+    expect(v.reuseDetected).toBe(false);
+    expect(v.checks.find((c) => c.id === "no-reuse").pass).toBe(true);
+    expect(v.checks.find((c) => c.id === "no-reuse").finding).toMatch(/not possible/);
+  });
+
+  it("rejects the claim instead, so a blank frame cannot evade reuse detection", () => {
+    const v = runClaimChecks(GOOD_EXIF, { ...POLICY, policyId: 9 }, NO_MATCH, FLAT_PHASH);
+
+    expect(v.comparable).toBe(false);
+    expect(v.eligible).toBe(false);
+    expect(v.checks.find((c) => c.id === "image-detail").finding).toMatch(/better light/);
+  });
+
+  it("still catches an exact byte match — identical bytes need no texture", () => {
+    const exact = {
+      exact: { title: "Claim evidence — policy #5", registrant: "adjuster:policy:5" },
+      near: null,
+    };
+    const v = runClaimChecks(GOOD_EXIF, { ...POLICY, policyId: 9 }, exact, FLAT_PHASH);
+
+    expect(v.reuseDetected).toBe(true);
+  });
+
+  it("trusts near-matches normally when the image has real detail", () => {
+    const v = runClaimChecks(GOOD_EXIF, { ...POLICY, policyId: 9 }, nearMatch, DETAILED_PHASH);
+
+    expect(v.comparable).toBe(true);
+    expect(v.reuseDetected).toBe(true);
+    expect(v.checks.some((c) => c.id === "image-detail")).toBe(false);
+  });
+
+  it("behaves exactly as before when no fingerprint is supplied", () => {
+    const v = runClaimChecks(GOOD_EXIF, { ...POLICY, policyId: 9 }, nearMatch);
+
+    expect(v.comparable).toBe(true);
+    expect(v.reuseDetected).toBe(true);
+  });
+});

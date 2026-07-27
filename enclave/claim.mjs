@@ -1,6 +1,7 @@
 // Claim-evidence checks — pure logic, no I/O. The enclave runs these against
 // EXIF extracted in TEE memory and a hash-only registry lookup, producing the
 // evidence verdict that the FCC-format settlement is signed over.
+import { isDegeneratePerceptualHash } from "./hash.mjs";
 
 const EARTH_RADIUS_KM = 6371;
 export const DEFAULT_MAX_DISTANCE_KM = 5;
@@ -35,9 +36,11 @@ export function daysFromCoverage(takenAtIso, coverageDate) {
  * @param policy  { lat, lon, date, maxKm?, windowDays? } — the insured location/date
  * @param lookup  { exact, near } from the hash-only registry lookup; any match on a
  *                prior claim record means this evidence was already used.
+ * @param phash   the submitted image's perceptual fingerprint, when available —
+ *                used to tell a real near-match from an uncomparable image.
  * @returns { eligible, checks: [{ id, pass, finding }] }
  */
-export function runClaimChecks(exif, policy, lookup) {
+export function runClaimChecks(exif, policy, lookup, phash = null) {
   const maxKm = policy.maxKm ?? DEFAULT_MAX_DISTANCE_KM;
   const windowDays = policy.windowDays ?? DEFAULT_WINDOW_DAYS;
   const checks = [];
@@ -81,11 +84,31 @@ export function runClaimChecks(exif, policy, lookup) {
     });
   }
 
-  const reuseMatch = lookup?.exact ?? lookup?.near?.record ?? null;
+  // An image with no texture fingerprints to the same value as every other
+  // featureless image, so a perceptual "match" against one proves nothing. Such
+  // evidence is rejected rather than compared: accepting it would let a
+  // fraudster defeat reuse detection with a blank frame, and trusting the match
+  // would accuse an honest claimant of recycling a photo they never saw.
+  const comparable = phash === null || !isDegeneratePerceptualHash(phash);
+  if (!comparable) {
+    checks.push({
+      id: "image-detail",
+      pass: false,
+      finding:
+        "This image has too little visual detail to fingerprint — it cannot be checked against"
+        + " prior claims. Photograph the damage in better light, filling more of the frame.",
+    });
+  }
+
+  // Exact byte matches always count; a perceptual near-match only counts when
+  // the fingerprint carries enough information to mean something.
+  const nearMatch = comparable ? (lookup?.near?.record ?? null) : null;
+  const reuseMatch = lookup?.exact ?? nearMatch;
   // A claimant re-uploading their own evidence for the SAME policy is a retry,
   // not fraud — reuse only counts when the match belongs to a different claim.
   const samePolicy =
     reuseMatch !== null &&
+    reuseMatch !== undefined &&
     policy.policyId !== undefined &&
     reuseMatch.registrant === `adjuster:policy:${policy.policyId}`;
   const reuseDetected = Boolean(reuseMatch) && !samePolicy;
@@ -96,9 +119,11 @@ export function runClaimChecks(exif, policy, lookup) {
       ? `This image ${lookup.exact ? "exactly matches" : `perceptually matches (distance ${lookup.near.distance}/64)`} evidence already on file: "${reuseMatch.title}".`
       : samePolicy
         ? "Matches this policy's own earlier submission — treated as a re-upload, not reuse."
-        : "No exact or near match against previously submitted evidence.",
+        : comparable
+          ? "No exact or near match against previously submitted evidence."
+          : "No exact match on file; perceptual comparison was not possible for this image.",
   });
 
   const eligible = checks.every((c) => c.pass);
-  return { eligible, reuseDetected, distanceKm, dayGap, checks };
+  return { eligible, reuseDetected, comparable, distanceKm, dayGap, checks };
 }
