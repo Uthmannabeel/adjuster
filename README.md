@@ -50,10 +50,11 @@ Four Flare protocols, each load-bearing — remove any one and the product stops
 | `FlareVtpmAttestation` | [`0xdf7fb88FcE2a9457a1a174845d702bF91aC8E19A`](https://coston2-explorer.flare.network/address/0xdf7fb88FcE2a9457a1a174845d702bF91aC8E19A) |
 | `OidcSignatureVerification` | [`0xf9b394C4583eD23A1b97f93428ea9A3e70Ad5A74`](https://coston2-explorer.flare.network/address/0xf9b394C4583eD23A1b97f93428ea9A3e70Ad5A74) |
 
-Two claims have run the full lifecycle and paid out on-chain:
+Three claims have run the full lifecycle and paid out on-chain:
 
 - **Policy #3** — evidence accepted → FDC round 1401182 attested 11.7mm → [23.29 C2FLR paid](https://coston2-explorer.flare.network/tx/0x6883b850c70ca8637cf71ed208c388735d07fe48216129b6e0878cc78db9e914)
 - **Policy #5** — re-verified end-to-end through the serverless API routes → FDC round 1403092 → [22.45 C2FLR paid](https://coston2-explorer.flare.network/tx/0xbb40b3b67f3fb4b03989798d1786c9b4df0818118c5769cca3b7e8c4901762ce)
+- **Policy #11** — 6 August 2026, photo to payout in one run → FDC round 1417483 attested 10.4mm at 4.8253, 7.0552 on 22 July → [25.17 C2FLR paid](https://coston2-explorer.flare.network/tx/0xdeb5e8e83353605a0d4b899c882aa9d8c5571b3c0e0996c151d48b7c3d05b7ee)
 
 And spoofing is rejected, not merely discouraged: submitting a tampered payload, or signing with a wallet that has no attested quote, both revert with `NotAttestedTee` on-chain.
 
