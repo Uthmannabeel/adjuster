@@ -15,6 +15,7 @@ import { extractExif } from "./exif.mjs";
 import { runClaimChecks } from "./claim.mjs";
 import { encodeSettlement, signActionResult, teeWallet } from "./fcc.mjs";
 import { attestationWallet, startAttestationLoop } from "./attest.mjs";
+import { startTls, tlsConfig } from "./tls.mjs";
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const TEE_WALLET = teeWallet();
@@ -306,22 +307,41 @@ async function handleClaim(req, res, url) {
   });
 }
 
-const server = createServer(async (req, res) => {
+const TLS = tlsConfig();
+// Replaced once startTls resolves; until then the plaintext port serves normally
+// so dev mode and the ops scripts behave exactly as before.
+let TLS_STATE = { active: false, reason: TLS.enabled ? "issuing" : "TLS_DOMAIN not set" };
+
+function healthPayload() {
+  return {
+    success: true,
+    data: {
+      service: "proof-of-real-enclave",
+      inConfidentialSpace: inConfidentialSpace(),
+      registry: REGISTRY_URL,
+      teeAddress: TEE_WALLET.address,
+      attestation: ATTESTATION,
+      tls: TLS_STATE,
+    },
+  };
+}
+
+async function handle(req, res, { encrypted }) {
   try {
     if (req.method === "OPTIONS") {
       res.writeHead(204, CORS_HEADERS);
       return res.end();
     }
     if (req.method === "GET" && req.url === "/health") {
-      return json(res, 200, {
-        success: true,
-        data: {
-          service: "proof-of-real-enclave",
-          inConfidentialSpace: inConfidentialSpace(),
-          registry: REGISTRY_URL,
-          teeAddress: TEE_WALLET.address,
-          attestation: ATTESTATION,
-        },
+      return json(res, 200, healthPayload());
+    }
+    // Once TLS is live, the plaintext port keeps answering /health for the ops
+    // scripts but refuses anything carrying an image — a cleartext upload would
+    // defeat the point of verifying it in a TEE.
+    if (TLS_STATE.active && !encrypted) {
+      return json(res, 426, {
+        success: false,
+        error: `This enclave accepts evidence over HTTPS only — use ${TLS_STATE.url}.`,
       });
     }
     if (req.method === "POST" && req.url === "/verify") {
@@ -334,9 +354,11 @@ const server = createServer(async (req, res) => {
   } catch (error) {
     return json(res, 500, { success: false, error: error.message ?? "Internal error." });
   }
-});
+}
 
-server.listen(PORT, () => {
+const server = createServer((req, res) => handle(req, res, { encrypted: false }));
+
+server.listen(PORT, async () => {
   console.log(`proof-of-real enclave listening on :${PORT}`);
   console.log(`registry: ${REGISTRY_URL}`);
   console.log(
@@ -344,4 +366,19 @@ server.listen(PORT, () => {
       ? "Confidential Space detected — attestation ENABLED"
       : "not in Confidential Space — dev mode, attestation unavailable",
   );
+
+  if (!TLS.enabled) {
+    console.log("tls: TLS_DOMAIN not set — serving plain HTTP (dev mode)");
+    return;
+  }
+  console.log(`tls: requesting a certificate for ${TLS.domain}${TLS.staging ? " (STAGING)" : ""}`);
+  const result = await startTls((req, res) => handle(req, res, { encrypted: true }), TLS);
+  TLS_STATE = result;
+  if (result.active) {
+    console.log(`tls: serving ${result.url} — certificate expires ${result.expiresAt ?? "?"}`);
+    if (result.staging) console.log("tls: STAGING certificate — browsers will not trust it");
+  } else {
+    console.error(`tls: NOT active — ${result.reason}`);
+    console.error("tls: continuing on plain HTTP; browsers on an HTTPS page will refuse to reach us");
+  }
 });

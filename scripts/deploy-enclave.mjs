@@ -4,12 +4,19 @@
 // Every stage is idempotent — re-running skips what already exists, so a failure
 // halfway through is fixed by fixing the cause and running the same command again.
 //
-//   node scripts/deploy-enclave.mjs --registry-url https://adjuster.vercel.app
+//   node scripts/deploy-enclave.mjs \
+//     --registry-url https://adjuster.vercel.app \
+//     --tls-domain enclave.example.com --tls-email you@example.com
 //   node scripts/deploy-enclave.mjs --from vm          # resume at a stage
 //   node scripts/deploy-enclave.mjs --only build       # run one stage
 //   node scripts/deploy-enclave.mjs --list             # show the stage names
 //
-// Stages: preflight → apis → repo → sa → build → firewall → vm → wait → pin → fund
+// The `ip` stage reserves the address first, so the A record for --tls-domain
+// can be created before the enclave boots and asks Let's Encrypt for a cert.
+// Without --tls-domain the enclave serves plain HTTP, which a browser on an
+// HTTPS page will refuse to talk to.
+//
+// Stages: preflight → apis → repo → sa → build → ip → firewall → vm → wait → pin → fund
 import { spawnSync } from "node:child_process";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -329,24 +336,68 @@ function build() {
   log.ok(`pushed ${ctx.digest}`);
 }
 
-function firewall() {
-  const name = "adjuster-enclave-8080";
-  const exists = gcloud([
-    "compute", "firewall-rules", "describe", name,
-    `--project=${ctx.project}`, "--format=value(name)",
+/**
+ * A reserved address lets the DNS record be created before the VM exists — and
+ * survives recreating the VM, so the A record is set once.
+ */
+function ip() {
+  const name = "adjuster-enclave-ip";
+  let address = gcloud([
+    "compute", "addresses", "describe", name,
+    `--region=${CFG.region}`, `--project=${ctx.project}`, "--format=value(address)",
   ]);
-  if (exists.ok) {
-    log.skip(`firewall rule ${name} exists`);
-    return;
+  if (!address.ok) {
+    const created = gcloud([
+      "compute", "addresses", "create", name,
+      `--region=${CFG.region}`, `--project=${ctx.project}`,
+      "--description=Stable address for the Adjuster enclave",
+    ]);
+    if (!created.ok) fail(`Could not reserve a static address.`, created.err);
+    address = gcloud([
+      "compute", "addresses", "describe", name,
+      `--region=${CFG.region}`, `--project=${ctx.project}`, "--format=value(address)",
+    ]);
+    if (!address.ok || !address.out) fail("Reserved the address but could not read it back.");
   }
-  const created = gcloud([
-    "compute", "firewall-rules", "create", name,
-    "--allow=tcp:8080", "--target-tags=adjuster-enclave",
-    "--source-ranges=0.0.0.0/0", `--project=${ctx.project}`,
-    "--description=Browser uploads go straight to the enclave",
-  ]);
-  if (!created.ok) fail(`Could not create firewall rule ${name}.`, created.err);
-  log.ok(`opened tcp:8080 to tag adjuster-enclave`);
+  ctx.ip = address.out;
+  writeState({ staticIp: ctx.ip, staticIpName: name });
+  log.ok(`static address ${ctx.ip}`);
+
+  const domain = arg("--tls-domain") ?? readState().tlsDomain;
+  if (domain) {
+    writeState({ tlsDomain: domain });
+    log.warn(`point an A record for ${domain} at ${ctx.ip} before the enclave boots`);
+  } else {
+    log.warn("no --tls-domain given — the enclave will serve plain HTTP, which browsers");
+    log.warn("on an HTTPS page will refuse to reach. Pass --tls-domain to enable in-enclave TLS.");
+  }
+}
+
+function firewall() {
+  // 80 is the ACME HTTP-01 challenge, 443 the browser upload path, 8080 the
+  // plaintext health port the ops scripts use.
+  const rules = [
+    ["adjuster-enclave-web", "tcp:80,tcp:443", "ACME challenge and browser uploads"],
+    ["adjuster-enclave-8080", "tcp:8080", "Plaintext health port for ops scripts"],
+  ];
+  for (const [name, allow, description] of rules) {
+    const exists = gcloud([
+      "compute", "firewall-rules", "describe", name,
+      `--project=${ctx.project}`, "--format=value(name)",
+    ]);
+    if (exists.ok) {
+      log.skip(`firewall rule ${name} exists`);
+      continue;
+    }
+    const created = gcloud([
+      "compute", "firewall-rules", "create", name,
+      `--allow=${allow}`, "--target-tags=adjuster-enclave",
+      "--source-ranges=0.0.0.0/0", `--project=${ctx.project}`,
+      `--description=${description}`,
+    ]);
+    if (!created.ok) fail(`Could not create firewall rule ${name}.`, created.err);
+    log.ok(`opened ${allow} to tag adjuster-enclave`);
+  }
 }
 
 function vm() {
@@ -366,14 +417,20 @@ function vm() {
   }
 
   // ^~^ switches the metadata delimiter to ~ so URLs keep their commas intact.
+  const state = readState();
+  const tlsDomain = arg("--tls-domain") ?? state.tlsDomain ?? "";
   const metadata = [
     `tee-image-reference=${imagePath}@${digest}`,
     `tee-container-log-redirect=true`,
-    `tee-env-REGISTRY_URL=${readState().registryUrl}`,
+    `tee-env-REGISTRY_URL=${state.registryUrl}`,
     `tee-env-FLARE_RPC_URL=${envLocal("FLARE_RPC_URL") ?? "https://coston2-api.flare.network/ext/C/rpc"}`,
     `tee-env-FLARE_VTPM_ADDRESS=${envLocal("FLARE_VTPM_ADDRESS") ?? ""}`,
     `tee-env-ALLOWED_ORIGIN=${arg("--allowed-origin") ?? "*"}`,
+    `tee-env-TLS_DOMAIN=${tlsDomain}`,
+    `tee-env-TLS_EMAIL=${arg("--tls-email") ?? ""}`,
+    `tee-env-TLS_STAGING=${process.argv.includes("--tls-staging") ? "true" : "false"}`,
   ].join("~");
+  if (tlsDomain) writeState({ tlsDomain });
 
   log.warn(`creating ${CFG.machine} TDX instance ${CFG.vm}`);
   const created = gcloud([
@@ -382,8 +439,9 @@ function vm() {
     "--confidential-compute-type=TDX", "--shielded-secure-boot",
     "--maintenance-policy=TERMINATE",
     "--image-project=confidential-space-images", "--image-family=confidential-space",
-    `--service-account=${ctx.saEmail ?? readState().serviceAccount}`,
+    `--service-account=${ctx.saEmail ?? state.serviceAccount}`,
     "--scopes=cloud-platform", "--tags=adjuster-enclave",
+    ...(state.staticIp ? [`--address=${state.staticIp}`] : []),
     `--metadata=^~^${metadata}`, `--project=${ctx.project}`,
     "--format=value(networkInterfaces[0].accessConfigs[0].natIP)",
   ]);
@@ -419,6 +477,18 @@ async function wait() {
         if (health?.data?.teeAddress) {
           log.ok(`in-enclave TEE address ${health.data.teeAddress}`);
           writeState({ teeAddress: health.data.teeAddress });
+        }
+
+        // The browser-facing URL is the TLS one when the enclave got a cert;
+        // ops scripts keep using the plaintext health port either way.
+        const tls = health?.data?.tls ?? {};
+        if (tls.active) {
+          log.ok(`TLS active — ${tls.url}${tls.staging ? " (STAGING cert, untrusted)" : ""}`);
+          writeState({ publicUrl: tls.url });
+        } else {
+          log.warn(`TLS not active — ${tls.reason ?? "unknown"}`);
+          log.warn("an HTTPS app will not be able to reach this enclave from a browser");
+          writeState({ publicUrl: url });
         }
         return;
       }
@@ -457,12 +527,14 @@ function fund() {
   });
   if (r.status !== 0) fail("fund-tee.mjs failed.");
   const state = readState();
-  console.log(`\n\x1b[1mEnclave live:\x1b[0m ${state.enclaveUrl}`);
+  const publicUrl = state.publicUrl ?? state.enclaveUrl;
+  console.log(`\n\x1b[1mEnclave live:\x1b[0m ${publicUrl}`);
   console.log(`  image  ${state.imagePath}@${state.imageDigest}`);
   console.log(`  TEE    ${state.teeAddress ?? "(read /health)"}`);
-  console.log(`\nSet on the app deployment:  NEXT_PUBLIC_ENCLAVE_URL=${state.enclaveUrl}`);
+  console.log(`  ops    ${state.enclaveUrl}/health`);
+  console.log(`\nSet on the app deployment:  NEXT_PUBLIC_ENCLAVE_URL=${publicUrl}`);
   console.log(`Then watch attestation land: node scripts/health-check.mjs --enclave ${state.enclaveUrl}\n`);
-  setEnvLocal("NEXT_PUBLIC_ENCLAVE_URL", state.enclaveUrl);
+  setEnvLocal("NEXT_PUBLIC_ENCLAVE_URL", publicUrl);
 }
 
 // ── runner ────────────────────────────────────────────────────────────────────
@@ -473,6 +545,7 @@ const STAGES = [
   ["repo", repo],
   ["sa", sa],
   ["build", build],
+  ["ip", ip],
   ["firewall", firewall],
   ["vm", vm],
   ["wait", wait],
