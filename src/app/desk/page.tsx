@@ -49,9 +49,20 @@ export default async function DeskPage() {
     try {
       [policies, poolWei] = await Promise.all([listPolicies(), poolBalanceWei()]);
     } catch (error: unknown) {
-      loadError = error instanceof Error ? error.message : "Could not read the contract.";
+      // Ethers appends "(code=TIMEOUT, version=…)"; an insurer reading a desk
+      // does not need the client library's version number.
+      const raw = error instanceof Error ? error.message : "";
+      const cleaned = raw.replace(/\s*\((?:code|version|argument|value)=.*\)\s*$/i, "").trim();
+      loadError = cleaned.length > 0 && cleaned.length < 160
+        ? cleaned
+        : "The Coston2 node did not answer in time.";
     }
   }
+
+  // With no data, every tile would read as a real zero — an empty book rather
+  // than an unread one. Show that the number is unknown instead.
+  const unread = loadError !== null || !configured;
+  const stat = (value: string | number): string => (unread ? "—" : String(value));
 
   const paid = policies.filter((p) => p.paidOut);
   const totalPaidWei = paid.reduce((sum, p) => sum + BigInt(p.paidWei), BigInt(0)).toString();
@@ -94,25 +105,27 @@ export default async function DeskPage() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <div className="doc-card p-4">
             <p className="eyebrow">Policies on book</p>
-            <p className="font-serif text-3xl mt-1">{policies.length}</p>
+            <p className="font-serif text-3xl mt-1">{stat(policies.length)}</p>
           </div>
           <div className="doc-card p-4">
             <p className="eyebrow">Awaiting weather</p>
-            <p className="font-serif text-3xl mt-1">{awaiting}</p>
+            <p className="font-serif text-3xl mt-1">{stat(awaiting)}</p>
           </div>
           <div className="doc-card p-4">
             <p className="eyebrow">Claims paid</p>
             <p className="font-serif text-3xl mt-1">
-              {paid.length}
-              <span className="mono text-[0.72rem] text-[var(--color-ink-faint)] ml-2">
-                {fmtFlr(totalPaidWei)} C2FLR
-              </span>
+              {stat(paid.length)}
+              {!unread && (
+                <span className="mono text-[0.72rem] text-[var(--color-ink-faint)] ml-2">
+                  {fmtFlr(totalPaidWei)} C2FLR
+                </span>
+              )}
             </p>
           </div>
           <div className="doc-card p-4">
             <p className="eyebrow">Payout pool</p>
             <p className="font-serif text-3xl mt-1">
-              {poolWei !== null ? fmtFlr(poolWei) : "—"}
+              {poolWei !== null && !unread ? fmtFlr(poolWei) : "—"}
               <span className="mono text-[0.72rem] text-[var(--color-ink-faint)] ml-2">C2FLR</span>
             </p>
           </div>
@@ -146,7 +159,11 @@ export default async function DeskPage() {
 
         {loadError && (
           <div className="doc-card p-6">
-            <p className="mono text-[0.8rem] text-[var(--color-stamp-red)]">{loadError}</p>
+            <p className="eyebrow mb-2">Register unavailable</p>
+            <p className="text-sm text-[var(--color-ink-soft)]">
+              {loadError} The book is held on-chain and was not read on this request — the figures
+              above are unknown, not zero. Refresh to try again.
+            </p>
           </div>
         )}
 

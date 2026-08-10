@@ -64,6 +64,20 @@ async function postJson<T>(
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// The first chain read from a cold serverless function is the one most likely to
+// time out — and it is exactly the request a judge's first visit triggers.
+const POLICY_LOAD_ATTEMPTS = 3;
+const POLICY_RETRY_BACKOFF_MS = 900;
+
+/** Strips ethers' internal suffix — "(code=TIMEOUT, version=6.17.0)" helps nobody reading a claim form. */
+function readableError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : "";
+  const cleaned = raw.replace(/\s*\((?:code|version|argument|value)=.*\)\s*$/i, "").trim();
+  return cleaned.length > 0 && cleaned.length < 160
+    ? cleaned
+    : "The Coston2 node did not answer in time.";
+}
+
 export function ClaimFlow() {
   const [policies, setPolicies] = useState<AdjusterPolicy[]>([]);
   const [contract, setContract] = useState<string | null>(null);
@@ -74,7 +88,11 @@ export function ClaimFlow() {
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [loadingSample, setLoadingSample] = useState(false);
+  // setupError is a recoverable problem with one action (buy, sample photo);
+  // loadError means the policy list itself never arrived and nothing can proceed.
   const [setupError, setSetupError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
   const [flow, setFlow] = useState<FlowState>(INITIAL_FLOW);
 
   // Cancels in-flight settle loops when the component unmounts or a new
@@ -83,19 +101,27 @@ export function ClaimFlow() {
   useEffect(() => () => void (runIdRef.current += 1), []);
 
   const loadPolicies = useCallback(async () => {
-    try {
-      const res = await fetch("/api/adjuster/policies");
-      const body = (await res.json()) as ApiResponse<PoliciesResponse>;
-      if (!body.success || !body.data) throw new Error(body.error ?? "Policy listing failed.");
-      setConfigured(body.data.configured);
-      setContract(body.data.contract);
-      setPolicies(body.data.policies);
-      return body.data.policies;
-    } catch (err: unknown) {
-      setConfigured(false);
-      setSetupError(err instanceof Error ? err.message : "Could not reach the policy registry.");
-      return [];
+    setLoadError(null);
+    for (let attempt = 0; attempt < POLICY_LOAD_ATTEMPTS; attempt += 1) {
+      try {
+        const res = await fetch("/api/adjuster/policies");
+        const body = (await res.json()) as ApiResponse<PoliciesResponse>;
+        if (!body.success || !body.data) throw new Error(body.error ?? "Policy listing failed.");
+        setConfigured(body.data.configured);
+        setContract(body.data.contract);
+        setPolicies(body.data.policies);
+        return body.data.policies;
+      } catch (err: unknown) {
+        // A slow node is not a shut claims office: only give up after retrying,
+        // and then offer a way back rather than a dead end.
+        if (attempt === POLICY_LOAD_ATTEMPTS - 1) {
+          setLoadError(readableError(err));
+          return [];
+        }
+        await sleep(POLICY_RETRY_BACKOFF_MS * (attempt + 1));
+      }
     }
+    return [];
   }, []);
 
   useEffect(() => {
@@ -268,13 +294,36 @@ export function ClaimFlow() {
   const stations = buildStations(flow, file, selected);
   const showChain = flow.phase !== "idle" || file !== null;
 
+  if (loadError) {
+    return (
+      <div className="doc-card p-6">
+        <p className="eyebrow mb-2">Could not reach Coston2</p>
+        <p className="text-sm text-[var(--color-ink-soft)]">
+          {loadError} The policies live on-chain, so this is a network problem rather than a
+          missing claims office — try again.
+        </p>
+        <button
+          type="button"
+          className="btn-primary mt-4"
+          disabled={retrying}
+          onClick={() => {
+            setRetrying(true);
+            void loadPolicies().finally(() => setRetrying(false));
+          }}
+        >
+          {retrying ? "Retrying…" : "Try again"}
+        </button>
+      </div>
+    );
+  }
+
   if (configured === false) {
     return (
       <div className="doc-card p-6">
         <p className="eyebrow mb-2">Claims office closed</p>
         <p className="text-sm text-[var(--color-ink-soft)]">
-          {setupError ??
-            "Adjuster is not configured on this deployment — the ClaimPayout contract address and relay key are missing."}
+          Adjuster is not configured on this deployment — the ClaimPayout contract address and
+          relay key are missing.
         </p>
       </div>
     );

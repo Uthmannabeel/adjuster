@@ -80,6 +80,27 @@ async function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
   }
 }
 
+/**
+ * Retries a READ against the chain. The first RPC call from a cold serverless
+ * function is the one most likely to time out, and that is exactly the request a
+ * visitor's first page load triggers — one slow node should not read as an empty
+ * book. Deliberately not applied to writes: resending a transaction is not safe.
+ */
+async function withReadRetry<T>(read: () => Promise<T>, attempts = 3): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await read();
+    } catch (error: unknown) {
+      lastError = error;
+      if (attempt < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 600 * (attempt + 1)));
+      }
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Flare RPC read failed.");
+}
+
 function toPolicy(policyId: number, p: Record<string, unknown> & ArrayLike<unknown>): AdjusterPolicy {
   const raw = p as unknown as {
     holder: string; date: string; lat: string; lon: string;
@@ -107,14 +128,16 @@ function toPolicy(policyId: number, p: Record<string, unknown> & ArrayLike<unkno
 
 /** All policies, newest first. */
 export async function listPolicies(limit = 50): Promise<AdjusterPolicy[]> {
-  const contract = readContract();
-  const count = Number(await withTimeout(contract.policyCount(), "policyCount"));
-  const from = Math.max(0, count - limit);
-  const out: AdjusterPolicy[] = [];
-  for (let i = count - 1; i >= from; i--) {
-    out.push(toPolicy(i, await withTimeout(contract.policies(i), `policies(${i})`)));
-  }
-  return out;
+  return withReadRetry(async () => {
+    const contract = readContract();
+    const count = Number(await withTimeout(contract.policyCount(), "policyCount"));
+    const from = Math.max(0, count - limit);
+    const out: AdjusterPolicy[] = [];
+    for (let i = count - 1; i >= from; i--) {
+      out.push(toPolicy(i, await withTimeout(contract.policies(i), `policies(${i})`)));
+    }
+    return out;
+  });
 }
 
 export async function getPolicy(policyId: number): Promise<AdjusterPolicy> {
@@ -152,7 +175,9 @@ export async function buyPolicy(input: {
 export async function poolBalanceWei(): Promise<string> {
   const address = process.env.CLAIM_PAYOUT_ADDRESS;
   if (!address) throw new Error("CLAIM_PAYOUT_ADDRESS is not configured.");
-  const balance = await withTimeout(provider().getBalance(address), "poolBalance");
+  const balance = await withReadRetry(() =>
+    withTimeout(provider().getBalance(address), "poolBalance"),
+  );
   return balance.toString();
 }
 
