@@ -417,7 +417,6 @@ function vm() {
   }
 
   // ^~^ switches the metadata delimiter to ~ so URLs keep their commas intact.
-  const state = readState();
   const tlsDomain = arg("--tls-domain") ?? state.tlsDomain ?? "";
   const metadata = [
     `tee-image-reference=${imagePath}@${digest}`,
