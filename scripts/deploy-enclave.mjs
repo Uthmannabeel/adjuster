@@ -121,14 +121,34 @@ async function fetchRetry(url, init, attempts = 4) {
   throw lastError;
 }
 
-/** Run gcloud and capture stdout. Never throws — the caller decides what a failure means. */
-function gcloud(args, { cwd = root } = {}) {
-  const r = spawnSync(GCLOUD, shellArgs(args), { cwd, encoding: "utf8", shell: NEEDS_SHELL });
-  return {
-    ok: r.status === 0,
-    out: (r.stdout ?? "").trim(),
-    err: (r.stderr ?? "").trim(),
-  };
+// This network intercepts TLS and its DNS intermittently fails; gcloud surfaces
+// that as a crash rather than a retryable status, and it lands mid-deploy.
+const TRANSIENT = /ConnectionError|SSLError|NameResolutionError|getaddrinfo|Max retries exceeded|UNEXPECTED_EOF|ServiceUnavailable|Backend Error|deadline exceeded/i;
+
+/** A create that already succeeded reads as a conflict on the retry — not a failure. */
+const ALREADY_EXISTS = /already exists|alreadyExists|resource.*not unique/i;
+
+/**
+ * Run gcloud and capture stdout. Never throws — the caller decides what a
+ * failure means. Transient network crashes are retried, since a lost response
+ * to a create looks identical to a create that never happened.
+ */
+function gcloud(args, { cwd = root, attempts = 3 } = {}) {
+  let last;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const r = spawnSync(GCLOUD, shellArgs(args), { cwd, encoding: "utf8", shell: NEEDS_SHELL });
+    last = {
+      ok: r.status === 0,
+      out: (r.stdout ?? "").trim(),
+      err: (r.stderr ?? "").trim(),
+    };
+    if (last.ok) return last;
+    if (ALREADY_EXISTS.test(last.err)) return { ...last, ok: true, existed: true };
+    if (!TRANSIENT.test(last.err) || attempt === attempts - 1) return last;
+    log.skip(`transient network error — retrying (${attempt + 1}/${attempts - 1})`);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2000 * (attempt + 1));
+  }
+  return last;
 }
 
 /** Run gcloud with output streamed through — for the slow, interesting ones. */
