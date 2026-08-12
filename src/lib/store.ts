@@ -15,7 +15,16 @@ export interface ProvenanceStore {
   put(record: Registration): Promise<void>;
   getById(id: string): Promise<Registration | null>;
   findByContentHash(contentHash: string): Promise<Registration | null>;
-  findNearest(phash: string, maxDistance: number): Promise<NearMatch | null>;
+  /**
+   * Nearest perceptual match within maxDistance. When excludeRegistrant is
+   * given, records registered by that party are skipped — so a claimant's own
+   * earlier upload cannot mask a cross-policy match sitting slightly farther.
+   */
+  findNearest(
+    phash: string,
+    maxDistance: number,
+    excludeRegistrant?: string,
+  ): Promise<NearMatch | null>;
   list(limit: number): Promise<Registration[]>;
 }
 

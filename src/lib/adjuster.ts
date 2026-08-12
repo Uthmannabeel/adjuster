@@ -210,3 +210,121 @@ export async function submitEvidence(
 }
 
 export { formatEther };
+
+/* ── Pre-upload attestation check ─────────────────────────────────────────
+   The browser sends the claim photo to the enclave BEFORE any signature can
+   prove what received it, so the claim page verifies the endpoint first: it
+   asks the enclave who it is, then checks ON-CHAIN — independently of the
+   enclave's self-report — that this key holds a live vTPM quote whose image
+   digest matches the container the enclave claims to be running. An operator
+   swapping in a non-TEE server fails this check before any photo is sent.
+   (Residual gap, documented: the TLS key is not itself quote-bound — full
+   RA-TLS channel binding is roadmap.) */
+
+const VTPM_ABI = [
+  "function getRegisteredQuote(address) view returns ((bytes32 digest, (bytes hwmodel, bytes swname,"
+  + " bytes imageDigest, bytes iss, bool secboot) base, uint256 exp, uint256 iat))",
+];
+
+export interface EnclaveAttestationStatus {
+  checked: boolean;
+  attested: boolean;
+  reason: string;
+  teeAddress: string | null;
+  expiresAt: string | null;
+  imageDigest: string | null;
+}
+
+export async function enclaveAttestationStatus(): Promise<EnclaveAttestationStatus> {
+  const enclaveUrl = (process.env.NEXT_PUBLIC_ENCLAVE_URL ?? "").replace(/\/$/, "");
+  const vtpmAddress = process.env.FLARE_VTPM_ADDRESS;
+  if (!enclaveUrl || !vtpmAddress) {
+    return {
+      checked: false,
+      attested: false,
+      reason: "Attestation check not configured.",
+      teeAddress: null,
+      expiresAt: null,
+      imageDigest: null,
+    };
+  }
+
+  let teeAddress: string | null = null;
+  let reportedDigest: string | null = null;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10_000);
+    const health = await (await fetch(`${enclaveUrl}/health`, { signal: controller.signal })).json();
+    clearTimeout(timer);
+    teeAddress = health?.data?.teeAddress ?? null;
+    reportedDigest =
+      health?.data?.attestation?.tokenImageDigest ?? health?.data?.attestation?.imageDigest ?? null;
+    if (!teeAddress) throw new Error("enclave did not report a signing address");
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "unreachable";
+    return {
+      checked: true,
+      attested: false,
+      reason: `Enclave unreachable (${message}).`,
+      teeAddress: null,
+      expiresAt: null,
+      imageDigest: null,
+    };
+  }
+
+  try {
+    const vtpm = new Contract(vtpmAddress, VTPM_ABI, provider());
+    const quote = await withReadRetry(() => withTimeout(vtpm.getRegisteredQuote(teeAddress), "getRegisteredQuote"));
+    const exp = Number(quote.exp);
+    const now = Math.floor(Date.now() / 1000);
+    if (exp === 0) {
+      return {
+        checked: true,
+        attested: false,
+        reason: "No vTPM quote is registered on-chain for this enclave's key.",
+        teeAddress,
+        expiresAt: null,
+        imageDigest: null,
+      };
+    }
+    if (exp < now) {
+      return {
+        checked: true,
+        attested: false,
+        reason: "The enclave's on-chain quote has expired and not yet renewed.",
+        teeAddress,
+        expiresAt: new Date(exp * 1000).toISOString(),
+        imageDigest: null,
+      };
+    }
+    const chainDigest = Buffer.from(quote.base.imageDigest.slice(2), "hex").toString("utf8");
+    if (reportedDigest && chainDigest && reportedDigest !== chainDigest) {
+      return {
+        checked: true,
+        attested: false,
+        reason: "The enclave reports a different container image than the chain attests.",
+        teeAddress,
+        expiresAt: new Date(exp * 1000).toISOString(),
+        imageDigest: chainDigest,
+      };
+    }
+    return {
+      checked: true,
+      attested: true,
+      reason: "Live on-chain vTPM quote; image digest matches.",
+      teeAddress,
+      expiresAt: new Date(exp * 1000).toISOString(),
+      imageDigest: chainDigest || reportedDigest,
+    };
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "read failed";
+    return {
+      checked: true,
+      attested: false,
+      reason: `Could not read the on-chain quote (${message}).`,
+      teeAddress,
+      expiresAt: null,
+      imageDigest: null,
+    };
+  }
+}

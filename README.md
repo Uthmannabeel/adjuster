@@ -24,7 +24,7 @@ The claimant's browser uploads the photograph **directly to the enclave**. It ne
 |---|---|---|
 | **Location** | EXIF GPS, haversine distance against the policy's coordinates *read from the contract* | a photo taken somewhere else |
 | **Date** | EXIF `DateTimeOriginal` against the policy's coverage window | a photo from before the storm |
-| **Reuse** | perceptual hash (dHash) against every prior claim fingerprint, with a same-policy re-upload exemption | one photograph claimed on several policies |
+| **Reuse** | perceptual hash (dHash) against every prior claim fingerprint — the search skips past the claimant's own records, so a same-policy retry can never mask a match on another policy | one photograph claimed on several policies |
 | **Detail** | degenerate-fingerprint rejection | a blank frame submitted to evade the reuse check |
 
 The registry stores **hashes only** — it is queried by fingerprint, never by image. What comes back out of the enclave is an [FCC `ActionResult`](https://dev.flare.network/fcc/): the verdict, ABI-encoded and signed EIP-191, which `ClaimPayout.submitEvidence` reconstructs and `ecrecover`s.
@@ -84,7 +84,7 @@ Surfaces: `/` the pitch and a real settled claim · `/claim` the claimant flow �
 
 ```bash
 npm install
-npm test                 # 102 unit tests
+npm test                 # 106 unit tests
 npm run dev              # the app
 
 cd enclave && npm install && node server.mjs    # the verifier, dev mode (attested=false)
@@ -111,18 +111,21 @@ This project began as **Proof of Real**, a media-provenance registry built for a
 
 ## Honest limitations
 
-Stated because a demo that overclaims is worth less than one that doesn't.
+Stated because a demo that overclaims is worth less than one that doesn't. Each limit names its production path.
 
-- **Attestation quotes expire hourly and cost real gas to renew** (~1.9M gas per RS256 verification, roughly 30 C2FLR/day at recent base fees). The enclave re-attests itself automatically, but if its in-enclave wallet runs dry the quote lapses and evidence submission reverts until it is refunded — fail-closed, by design, and visible on `/desk`. The signing key is ephemeral: every enclave boot generates a fresh key inside the TEE that must earn attestation again.
-- **Testnet only.** Coston2, test funds, not production insurance.
-- The demo relays transactions from a server wallet so a judge needs no wallet — a custody shortcut, not a design.
-- dHash is defeated by cropping and rotation; it catches re-encoding, resizing, and light edits.
-- One enclave, so no multi-node agreement on a verdict.
-- `/claim` has no rate limiting or authentication.
-- No pool reservation accounting — concurrent settlements could race for the same funds.
-- EXIF timestamps carry timezone ambiguity of up to a day at coverage-window edges.
-- The contracts are covered by live end-to-end scripts against Coston2, not by unit tests.
-- Open-Meteo's archive lags roughly five days, so demo policies must use dates at least a week old.
+**Evidence layer.** EXIF can be forged with free tools — the chamber proves the photograph was *checked* honestly, not *taken* honestly; the production path is hardware-signed capture (C2PA / ISO&nbsp;22144, the spine of the roadmap). dHash is defeated by cropping and rotation (it catches re-encoding, resizing, and light edits; blank-frame evasion is explicitly rejected as uncomparable). EXIF timestamps carry timezone ambiguity of up to a day at coverage-window edges.
+
+**Economics.** Policies can be bought for dates in the past — deliberate here because Open-Meteo's archive lags ~5 days, and unacceptable in production, where rainfall history is public and backdating must be forbidden (a one-`require` change) and premiums risk-priced (no underwriting exists). Basis risk is inherent to parametrics: the trigger is rainfall at coordinates, not damage — and the rainfall is interpolated reanalysis, not a gauge at the address. Concurrent settlements can race the pool; the loser reverts, so funds are safe but the UX isn't. FTSOv2 conversion at settlement time exposes payout size to price movement on a thin testnet feed.
+
+**Privacy.** Policy coordinates are public on-chain — the photograph is protected, the insured location is not. The FDC request pin *requires* plaintext coordinates today; the production path is coordinate commitments with in-enclave request construction (Flare's own FCC example encrypts policy terms). The claim page now verifies the enclave's live on-chain vTPM quote and container digest *before* enabling upload — an operator swapping in a non-TEE server fails that check with no photo sent — but the TLS key itself is not quote-bound; full RA-TLS channel binding is roadmap. Fingerprints are not zero-knowledge: hash lookups now require a key (`REGISTRY_LOOKUP_KEY`), which closes public membership testing but not testing by key holders.
+
+**Trust chain.** Cross-claim fraud detection trusts the registry to answer hash lookups honestly — a dishonest registry operator could hide matches; the registry's hash-chained ledger and the anchor contract exist precisely to make that tamper-evident, and anchoring every claim-fingerprint write is the production path. The root of "no one can enter" is Intel TDX plus Google's Confidential Space attestation — a strong, *chosen* root, not trustlessness; Google rotating its signing keys is a live dependency (it did so mid-program; the daily check caught and re-registered them). One enclave, no multi-node agreement. The contract still accepts a flagged dev signer so `/desk` can show amber-versus-green provenance; removing it is deleting one mapping.
+
+**Operations.** Attestation quotes expire hourly and cost ~30 C2FLR/day to renew — if the in-enclave wallet runs dry the quote lapses and evidence reverts until refunded (fail-closed, visible on `/desk`). Every boot generates a fresh in-enclave key that must earn attestation again. Testnet only; the demo relays transactions from a server wallet so judges need no wallet — custody shortcut, not design. No KYC or sanctions screening, which real insurance money requires. The contracts are covered by live end-to-end scripts against Coston2, not unit tests.
+
+## Hardening shipped during the program
+
+Four of the limitations this section used to list are now closed, live: **parser isolation** — image decoding (the classic RCE surface) runs in a disposable child process holding no secrets, so a decoder exploit lands in a process that cannot sign; **retry-masking fix** — a claimant's own earlier upload can no longer hide a cross-policy match (the registry searches past the claimant's records; regression-tested); **keyed lookups** — the hash-lookup endpoint requires a key, closing public membership tests; **per-IP rate limiting** on the evidence endpoints; and the **pre-upload attestation gate** described above.
 
 ## Roadmap
 

@@ -9,9 +9,9 @@
 // Env: PORT (default 8080), REGISTRY_URL (default http://localhost:3000),
 //      ATTESTATION_AUDIENCE (default proof-of-real-verifier)
 import { createServer } from "node:http";
-import { contentHash, perceptualHash } from "./hash.mjs";
+import { contentHash } from "./hash.mjs";
 import { fetchAttestationToken, decodeClaims, inConfidentialSpace } from "./attestation.mjs";
-import { extractExif } from "./exif.mjs";
+import { parseImageIsolated } from "./parse.mjs";
 import { runClaimChecks } from "./claim.mjs";
 import { encodeSettlement, signActionResult, teeWallet } from "./fcc.mjs";
 import { attestationWallet, startAttestationLoop } from "./attest.mjs";
@@ -53,6 +53,37 @@ const AUDIENCE = process.env.ATTESTATION_AUDIENCE ?? "proof-of-real-verifier";
 const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
 const NEAR_MATCH_MAX_DISTANCE = 10; // must match src/lib/registry.ts
 const ACCEPTED_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+
+// Per-IP token bucket on the evidence endpoints: a claim needs seconds of
+// human effort, so sustained machine-rate traffic is abuse, not claims.
+const RATE_CAPACITY = 10;
+const RATE_REFILL_PER_MIN = 6;
+const rateBuckets = new Map();
+function rateLimited(req) {
+  const ip =
+    String(req.headers["x-forwarded-for"] ?? "").split(",")[0].trim() ||
+    req.socket.remoteAddress ||
+    "unknown";
+  const now = Date.now();
+  if (rateBuckets.size > 10_000) rateBuckets.clear();
+  const bucket = rateBuckets.get(ip) ?? { tokens: RATE_CAPACITY, ts: now };
+  bucket.tokens = Math.min(
+    RATE_CAPACITY,
+    bucket.tokens + ((now - bucket.ts) / 60_000) * RATE_REFILL_PER_MIN,
+  );
+  bucket.ts = now;
+  const limited = bucket.tokens < 1;
+  if (!limited) bucket.tokens -= 1;
+  rateBuckets.set(ip, bucket);
+  return limited;
+}
+
+// The registry can require this key for hash lookups, closing the open
+// membership-test endpoint; only the enclave needs to carry it.
+const LOOKUP_KEY = process.env.REGISTRY_LOOKUP_KEY ?? null;
+function lookupHeaders() {
+  return LOOKUP_KEY ? { "x-registry-lookup-key": LOOKUP_KEY } : {};
+}
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": process.env.ALLOWED_ORIGIN ?? "*",
@@ -145,19 +176,21 @@ async function handleVerify(req, res) {
   }
   if (buf.length === 0) return json(res, 400, { success: false, error: "Empty upload." });
 
-  // Fingerprint in enclave memory only.
+  // Fingerprint in enclave memory; decoding happens in a disposable child
+  // process that holds no secrets (see parse-worker.mjs).
   const sha = contentHash(buf);
-  let phash;
-  try {
-    phash = await perceptualHash(buf);
-  } catch {
+  const parsed = await parseImageIsolated(buf);
+  if (!parsed.ok) {
     return json(res, 400, { success: false, error: "Not a decodable image." });
   }
+  const phash = parsed.phash;
 
   // Hash-only registry lookup — the image itself stays in the TEE.
   let lookup;
   try {
-    const lookupRes = await fetch(`${REGISTRY_URL}/api/lookup?sha=${sha}&phash=${phash}`);
+    const lookupRes = await fetch(`${REGISTRY_URL}/api/lookup?sha=${sha}&phash=${phash}`, {
+      headers: lookupHeaders(),
+    });
     lookup = await lookupRes.json();
     if (!lookup.success) throw new Error(lookup.error ?? "Registry lookup failed.");
   } catch (error) {
@@ -230,20 +263,27 @@ async function handleClaim(req, res, url) {
   }
   if (buf.length === 0) return json(res, 400, { success: false, error: "Empty upload." });
 
-  // Fingerprint + EXIF in enclave memory only.
+  // Fingerprint + EXIF in enclave memory; decoding happens in a disposable
+  // child process that holds no secrets (see parse-worker.mjs).
   const sha = contentHash(buf);
-  let phash;
-  try {
-    phash = await perceptualHash(buf);
-  } catch {
+  const parsed = await parseImageIsolated(buf);
+  if (!parsed.ok) {
     return json(res, 400, { success: false, error: "Not a decodable image." });
   }
-  const exif = await extractExif(buf);
+  const phash = parsed.phash;
+  const exif = parsed.exif;
 
-  // Hash-only reuse lookup — catches evidence recycled across claims.
+  // Hash-only reuse lookup. `exclude` makes the registry search PAST the
+  // claimant's own earlier uploads, so a same-policy retry can never mask a
+  // cross-policy match — and the near search runs even when an exact match
+  // exists, for the same reason.
   let lookup;
   try {
-    const lookupRes = await fetch(`${REGISTRY_URL}/api/lookup?sha=${sha}&phash=${phash}`);
+    const own = encodeURIComponent(`adjuster:policy:${policyId}`);
+    const lookupRes = await fetch(
+      `${REGISTRY_URL}/api/lookup?sha=${sha}&phash=${phash}&exclude=${own}`,
+      { headers: lookupHeaders() },
+    );
     lookup = await lookupRes.json();
     if (!lookup.success) throw new Error(lookup.error ?? "Registry lookup failed.");
   } catch (error) {
@@ -343,6 +383,14 @@ async function handle(req, res, { encrypted }) {
         success: false,
         error: `This enclave accepts evidence over HTTPS only — use ${TLS_STATE.url}.`,
       });
+    }
+    if (req.method === "POST" && (req.url === "/verify" || req.url?.startsWith("/claim"))) {
+      if (rateLimited(req)) {
+        return json(res, 429, {
+          success: false,
+          error: "Too many uploads from this address — wait a minute and try again.",
+        });
+      }
     }
     if (req.method === "POST" && req.url === "/verify") {
       return await handleVerify(req, res);

@@ -448,6 +448,11 @@ function vm() {
     `tee-env-TLS_DOMAIN=${tlsDomain}`,
     `tee-env-TLS_EMAIL=${arg("--tls-email") ?? ""}`,
     `tee-env-TLS_STAGING=${process.argv.includes("--tls-staging") ? "true" : "false"}`,
+    // Lookup key: lets the registry close its hash-lookup endpoint to the
+    // public while the enclave keeps querying it. Grants no signing authority.
+    ...(envLocal("REGISTRY_LOOKUP_KEY")
+      ? [`tee-env-REGISTRY_LOOKUP_KEY=${envLocal("REGISTRY_LOOKUP_KEY")}`]
+      : []),
   ].join("~");
   if (tlsDomain) writeState({ tlsDomain });
 

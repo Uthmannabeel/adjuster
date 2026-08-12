@@ -11,7 +11,7 @@ ENV NODE_ENV=production
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
-COPY hash.mjs exif.mjs claim.mjs fcc.mjs attestation.mjs attest.mjs tls.mjs server.mjs ./
+COPY hash.mjs exif.mjs claim.mjs fcc.mjs attestation.mjs attest.mjs tls.mjs parse.mjs parse-worker.mjs server.mjs ./
 
 # Confidential Space runs the container as-is; no shell entrypoint tricks.
 # 8080 is the plaintext port (health + dev); 443 serves browsers once the
@@ -28,5 +28,5 @@ CMD ["node", "server.mjs"]
 # TLS_* is overridable: naming the hostname does not grant any authority — the
 # certificate key is generated in-enclave and the signing key still earns its
 # authority by attesting on-chain.
-LABEL "tee.launch_policy.allow_env_override"="REGISTRY_URL,ALLOWED_ORIGIN,ATTESTATION_AUDIENCE,FLARE_RPC_URL,FLARE_VTPM_ADDRESS,TLS_DOMAIN,TLS_EMAIL,TLS_STAGING"
+LABEL "tee.launch_policy.allow_env_override"="REGISTRY_URL,ALLOWED_ORIGIN,ATTESTATION_AUDIENCE,FLARE_RPC_URL,FLARE_VTPM_ADDRESS,TLS_DOMAIN,TLS_EMAIL,TLS_STAGING,REGISTRY_LOOKUP_KEY"
 LABEL "tee.launch_policy.log_redirect"="always"

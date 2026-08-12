@@ -101,23 +101,27 @@ export function runClaimChecks(exif, policy, lookup, phash = null) {
   }
 
   // Exact byte matches always count; a perceptual near-match only counts when
-  // the fingerprint carries enough information to mean something.
-  const nearMatch = comparable ? (lookup?.near?.record ?? null) : null;
-  const reuseMatch = lookup?.exact ?? nearMatch;
-  // A claimant re-uploading their own evidence for the SAME policy is a retry,
-  // not fraud — reuse only counts when the match belongs to a different claim.
-  const samePolicy =
-    reuseMatch !== null &&
-    reuseMatch !== undefined &&
-    policy.policyId !== undefined &&
-    reuseMatch.registrant === `adjuster:policy:${policy.policyId}`;
-  const reuseDetected = Boolean(reuseMatch) && !samePolicy;
+  // the fingerprint carries enough information to mean something. A claimant
+  // re-uploading their own evidence for the SAME policy is a retry, not fraud
+  // — but that retry must never mask a match against ANOTHER policy, so the
+  // near-match is judged independently of the exact one (the registry searches
+  // past the claimant's own records when asked via `exclude`, and this logic
+  // filters own-policy records again as a second line of defence).
+  const own =
+    policy.policyId !== undefined ? `adjuster:policy:${policy.policyId}` : null;
+  const exact = lookup?.exact ?? null;
+  const samePolicyExact = exact !== null && own !== null && exact.registrant === own;
+  const near = comparable ? (lookup?.near?.record ?? null) : null;
+  const crossNear = near !== null && own !== null && near.registrant === own ? null : near;
+  const crossExact = exact !== null && !samePolicyExact ? exact : null;
+  const reuseMatch = crossExact ?? crossNear;
+  const reuseDetected = Boolean(reuseMatch);
   checks.push({
     id: "no-reuse",
     pass: !reuseDetected,
     finding: reuseDetected
-      ? `This image ${lookup.exact ? "exactly matches" : `perceptually matches (distance ${lookup.near.distance}/64)`} evidence already on file: "${reuseMatch.title}".`
-      : samePolicy
+      ? `This image ${crossExact ? "exactly matches" : `perceptually matches (distance ${lookup.near.distance}/64)`} evidence already on file: "${reuseMatch.title}".`
+      : samePolicyExact
         ? "Matches this policy's own earlier submission — treated as a re-upload, not reuse."
         : comparable
           ? "No exact or near match against previously submitted evidence."

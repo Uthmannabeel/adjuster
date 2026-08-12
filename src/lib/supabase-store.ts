@@ -75,7 +75,11 @@ export class SupabaseStore implements ProvenanceStore {
     return row ? (row.record as Registration) : null;
   }
 
-  async findNearest(phash: string, maxDistance: number): Promise<NearMatch | null> {
+  async findNearest(
+    phash: string,
+    maxDistance: number,
+    excludeRegistrant?: string,
+  ): Promise<NearMatch | null> {
     // One indexed overlap query: any row sharing >=1 LSH band is a candidate.
     const { data, error } = await this.client
       .from(TABLE)
@@ -85,6 +89,8 @@ export class SupabaseStore implements ProvenanceStore {
 
     let best: NearMatch | null = null;
     for (const row of data ?? []) {
+      if (excludeRegistrant && (row.record as Registration).registrant === excludeRegistrant)
+        continue;
       const distance = hammingDistance(phash, row.phash as string);
       if (distance <= maxDistance && (best === null || distance < best.distance)) {
         best = { record: row.record as Registration, distance };

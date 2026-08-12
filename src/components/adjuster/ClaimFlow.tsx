@@ -94,6 +94,37 @@ export function ClaimFlow() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
   const [flow, setFlow] = useState<FlowState>(INITIAL_FLOW);
+  // Pre-upload attestation check: verified ON-CHAIN by our server, not by
+  // asking the enclave to vouch for itself. null = still checking;
+  // checked:false = the check itself was unavailable (warn, do not block —
+  // the chain still rejects unattested verdicts); attested:false = block.
+  const [attStatus, setAttStatus] = useState<{
+    checked: boolean;
+    attested: boolean;
+    reason: string;
+    expiresAt: string | null;
+  } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/adjuster/enclave-status")
+      .then((r) => r.json())
+      .then((j) => {
+        if (!cancelled && j?.success) setAttStatus(j.data);
+      })
+      .catch(() => {
+        if (!cancelled)
+          setAttStatus({
+            checked: false,
+            attested: false,
+            reason: "Status check unavailable.",
+            expiresAt: null,
+          });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Cancels in-flight settle loops when the component unmounts or a new
   // claim starts (each run gets its own id).
@@ -461,11 +492,45 @@ export function ClaimFlow() {
               be verified on this deployment.
             </p>
           )}
+
+          {ENCLAVE_URL && attStatus === null && (
+            <p className="mono text-[0.72rem] text-[var(--color-ink-faint)] mt-3">
+              Verifying the chamber&rsquo;s on-chain attestation…
+            </p>
+          )}
+          {ENCLAVE_URL && attStatus?.attested && (
+            <p className="mono text-[0.72rem] text-[var(--color-stamp-green)] mt-3">
+              Chamber verified before upload: live on-chain vTPM quote, container image matches
+              {attStatus.expiresAt
+                ? ` (quote renews before ${new Date(attStatus.expiresAt).toUTCString().slice(17, 22)} UTC)`
+                : ""}
+              .
+            </p>
+          )}
+          {ENCLAVE_URL && attStatus !== null && attStatus.checked && !attStatus.attested && (
+            <p className="mono text-[0.72rem] text-[var(--color-stamp-red)] mt-3">
+              The chamber could not be verified on-chain — {attStatus.reason} Photo submission is
+              held; the contract would reject its verdict anyway.
+            </p>
+          )}
+          {ENCLAVE_URL && attStatus !== null && !attStatus.checked && (
+            <p className="mono text-[0.72rem] text-[var(--color-stamp-amber)] mt-3">
+              Could not run the pre-upload attestation check — {attStatus.reason} The chain still
+              rejects unattested verdicts on submission.
+            </p>
+          )}
         </div>
 
         <button
           className="btn w-full"
-          disabled={!file || policyId === null || !ENCLAVE_URL || busy || configured !== true}
+          disabled={
+            !file ||
+            policyId === null ||
+            !ENCLAVE_URL ||
+            busy ||
+            configured !== true ||
+            (attStatus !== null && attStatus.checked && !attStatus.attested)
+          }
           onClick={fileClaim}
         >
           {busy ? "Claim in progress…" : "File claim"}

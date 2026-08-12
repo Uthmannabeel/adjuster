@@ -190,3 +190,49 @@ describe("uncomparable evidence", () => {
     expect(v.reuseDetected).toBe(true);
   });
 });
+
+describe("runClaimChecks — retry masking (the audit's P2 hole, now closed)", () => {
+  const ownRecord = {
+    registrant: "adjuster:policy:7",
+    title: "Claim evidence — policy #7",
+    phash: "aaaaaaaaaaaaaaaa",
+  };
+  const otherRecord = {
+    registrant: "adjuster:policy:3",
+    title: "Claim evidence — policy #3",
+    phash: "aaaaaaaaaaaaaaab",
+  };
+  const policy7 = { ...POLICY, policyId: 7 };
+  // A phash with plenty of texture, so the comparability gate passes.
+  const richPhash = "9c6337d29c6337d2";
+
+  it("an own-policy exact match does NOT mask a cross-policy near match", () => {
+    const lookup = { exact: ownRecord, near: { record: otherRecord, distance: 2 } };
+    const verdict = runClaimChecks(GOOD_EXIF, policy7, lookup, richPhash);
+    const reuse = verdict.checks.find((c) => c.id === "no-reuse");
+    expect(verdict.reuseDetected).toBe(true);
+    expect(reuse.pass).toBe(false);
+    expect(reuse.finding).toContain("policy #3");
+  });
+
+  it("a pure same-policy retry still passes as a re-upload", () => {
+    const lookup = { exact: ownRecord, near: null };
+    const verdict = runClaimChecks(GOOD_EXIF, policy7, lookup, richPhash);
+    const reuse = verdict.checks.find((c) => c.id === "no-reuse");
+    expect(verdict.reuseDetected).toBe(false);
+    expect(reuse.pass).toBe(true);
+    expect(reuse.finding).toContain("re-upload");
+  });
+
+  it("a cross-policy exact match is still reuse", () => {
+    const lookup = { exact: otherRecord, near: null };
+    const verdict = runClaimChecks(GOOD_EXIF, policy7, lookup, richPhash);
+    expect(verdict.reuseDetected).toBe(true);
+  });
+
+  it("an own-policy near match alone is not reuse (second line of defence)", () => {
+    const lookup = { exact: null, near: { record: ownRecord, distance: 1 } };
+    const verdict = runClaimChecks(GOOD_EXIF, policy7, lookup, richPhash);
+    expect(verdict.reuseDetected).toBe(false);
+  });
+});

@@ -88,7 +88,11 @@ export class DynamoStore implements ProvenanceStore {
     return item ? item.record : null;
   }
 
-  async findNearest(phash: string, maxDistance: number): Promise<NearMatch | null> {
+  async findNearest(
+    phash: string,
+    maxDistance: number,
+    excludeRegistrant?: string,
+  ): Promise<NearMatch | null> {
     // One point query per band, in parallel — bounded work, no scan.
     const perBand = await Promise.all(
       bands(phash).map((b) =>
@@ -110,19 +114,20 @@ export class DynamoStore implements ProvenanceStore {
       }
     }
 
-    let bestId: string | null = null;
-    let bestDistance = Number.MAX_SAFE_INTEGER;
-    for (const [id, candidatePhash] of candidates) {
-      const distance = hammingDistance(phash, candidatePhash);
-      if (distance <= maxDistance && distance < bestDistance) {
-        bestDistance = distance;
-        bestId = id;
-      }
-    }
+    // Rank all in-range candidates, then walk closest-first so an excluded
+    // registrant's record cannot mask the next-nearest match.
+    const ranked = [...candidates]
+      .map(([id, candidatePhash]) => ({ id, distance: hammingDistance(phash, candidatePhash) }))
+      .filter((c) => c.distance <= maxDistance)
+      .sort((a, b) => a.distance - b.distance);
 
-    if (bestId === null) return null;
-    const record = await this.getById(bestId);
-    return record ? { record, distance: bestDistance } : null;
+    for (const candidate of ranked) {
+      const record = await this.getById(candidate.id);
+      if (!record) continue;
+      if (excludeRegistrant && record.registrant === excludeRegistrant) continue;
+      return { record, distance: candidate.distance };
+    }
+    return null;
   }
 
   async list(limit: number): Promise<Registration[]> {

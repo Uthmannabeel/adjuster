@@ -27,10 +27,15 @@ export class LocalStore implements ProvenanceStore {
     return all.find((r) => r.contentHash === contentHash) ?? null;
   }
 
-  async findNearest(phash: string, maxDistance: number): Promise<NearMatch | null> {
+  async findNearest(
+    phash: string,
+    maxDistance: number,
+    excludeRegistrant?: string,
+  ): Promise<NearMatch | null> {
     const all = await readAll();
     let best: NearMatch | null = null;
     for (const record of all) {
+      if (excludeRegistrant && record.registrant === excludeRegistrant) continue;
       const distance = hammingDistance(phash, record.phash);
       if (distance <= maxDistance && (best === null || distance < best.distance)) {
         best = { record, distance };
