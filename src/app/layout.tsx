@@ -12,7 +12,17 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" className="h-full antialiased">
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <script
+          // Apply a pinned theme before first paint so a dark-mode reader
+          // never sees a flash of daylight paper.
+          dangerouslySetInnerHTML={{
+            __html:
+              "try{var t=localStorage.getItem('adjuster-theme');if(t==='dark'||t==='light')document.documentElement.dataset.theme=t;}catch(e){}",
+          }}
+        />
+        {children}
+      </body>
     </html>
   );
 }

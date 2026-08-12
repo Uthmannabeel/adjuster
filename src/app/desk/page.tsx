@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import {
   adjusterConfigured,
   claimsAddress,
@@ -81,6 +82,7 @@ export default async function DeskPage() {
               File a claim
             </Link>
             <span className="text-[var(--color-ink)]">Claims desk</span>
+            <ThemeToggle />
           </nav>
         </div>
       </header>

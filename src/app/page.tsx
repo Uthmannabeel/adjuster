@@ -1,14 +1,16 @@
 import Link from "next/link";
 import { EvidenceChain, type Station } from "@/components/adjuster/EvidenceChain";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 export const dynamic = "force-dynamic";
 
 /**
- * The specimen is a REAL claim: policy № 3, settled on Coston2 on 20 Jul 2026.
- * 11.7 mm rainfall attested in FDC round 1401182 → 23.29 C2FLR paid.
+ * The specimen is a REAL claim: policy № 14, settled on Coston2 on 12 Aug 2026 —
+ * the first claim verified inside real Confidential Space. 10.4 mm attested in
+ * FDC round 1423784 → 24.92 C2FLR paid with evidenceAttested=true.
  */
 const SPECIMEN_SETTLE_TX =
-  "https://coston2-explorer.flare.network/tx/0x6883b850c70ca8637cf71ed208c388735d07fe48216129b6e0878cc78db9e914";
+  "https://coston2-explorer.flare.network/tx/0x6b6f0a6403f1e57642bf744105ea24c43d624ecef0a8732c3b10cb19058557a6";
 
 const SPECIMEN: Station[] = [
   {
@@ -22,9 +24,9 @@ const SPECIMEN: Station[] = [
     title: "Confidential verification",
     status: "done",
     lines: [
-      { text: "0.52 km from the insured address · on the coverage date", tone: "green" },
+      { text: "At the insured address · on the coverage date", tone: "green" },
       { text: "No reuse across prior claims (perceptual match sweep)", tone: "green" },
-      { text: "Verified in enclave memory — the photo never left it", tone: "green" },
+      { text: "Verified in a real TEE — attested on-chain, not asserted", tone: "green" },
     ],
   },
   {
@@ -37,13 +39,13 @@ const SPECIMEN: Station[] = [
     id: "weather",
     title: "Weather attested by Flare",
     status: "done",
-    lines: [{ text: "11.7 mm rainfall attested · FDC round 1401182 · threshold 5.0 mm", tone: "green" }],
+    lines: [{ text: "10.4 mm rainfall attested · FDC round 1423784 · threshold 5.0 mm", tone: "green" }],
   },
   {
     id: "payout",
     title: "Payout",
     status: "done",
-    lines: [{ text: "23.29 C2FLR paid — settled 20 Jul 2026", href: SPECIMEN_SETTLE_TX, tone: "green" }],
+    lines: [{ text: "24.92 C2FLR paid — settled 12 Aug 2026", href: SPECIMEN_SETTLE_TX, tone: "green" }],
   },
 ];
 
@@ -92,6 +94,7 @@ export default function Home() {
             >
               Registry
             </Link>
+            <ThemeToggle />
           </nav>
         </div>
       </header>
@@ -150,14 +153,14 @@ export default function Home() {
         <div className="doc-card p-6 relative">
           <div className="doc-rule pb-3 mb-5 flex items-start justify-between gap-4">
             <div>
-              <p className="eyebrow">Claim file · Policy № 3</p>
+              <p className="eyebrow">Claim file · Policy № 14</p>
               <h2 className="font-serif text-2xl mt-0.5">A real claim, settled.</h2>
             </div>
             <span className="stamp stamp-green shrink-0">Paid</span>
           </div>
           <EvidenceChain stations={SPECIMEN} />
           <p className="mono text-[0.68rem] text-[var(--color-ink-faint)] mt-5 doc-rule border-b-0 border-t pt-3">
-            Settled end-to-end on Coston2, 20 Jul 2026 — every link above is checkable on the
+            Settled end-to-end on Coston2, 12 Aug 2026, in real Confidential Space — every link above is checkable on the
             explorer.
           </p>
         </div>

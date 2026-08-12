@@ -21,6 +21,49 @@
 
 :root {
   color-scheme: light;
+  --grain-dot: rgba(27, 26, 22, 0.04);
+  --card-shadow: rgba(27, 26, 22, 0.12);
+  --btn-shadow: rgba(27, 26, 22, 0.25);
+}
+
+/* ── The archive at night — same dossier, lamplight instead of daylight.
+   Two routes in: the OS preference (unless the reader pinned light), or an
+   explicit data-theme="dark" pinned by the toggle. Values are identical. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --color-paper: #1a1712;
+    --color-paper-2: #221e16;
+    --color-paper-3: #2c2619;
+    --color-ink: #eee5d3;
+    --color-ink-soft: #c0b6a0;
+    --color-ink-faint: #8f8672;
+    --color-rule: #443d2b;
+    --color-stamp-green: #45a578;
+    --color-stamp-red: #d65b4e;
+    --color-stamp-amber: #cfa04a;
+    --color-carbon: #8fa9e0;
+    --grain-dot: rgba(238, 229, 211, 0.05);
+    --card-shadow: rgba(0, 0, 0, 0.45);
+    --btn-shadow: rgba(0, 0, 0, 0.55);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-paper: #1a1712;
+  --color-paper-2: #221e16;
+  --color-paper-3: #2c2619;
+  --color-ink: #eee5d3;
+  --color-ink-soft: #c0b6a0;
+  --color-ink-faint: #8f8672;
+  --color-rule: #443d2b;
+  --color-stamp-green: #45a578;
+  --color-stamp-red: #d65b4e;
+  --color-stamp-amber: #cfa04a;
+  --color-carbon: #8fa9e0;
+  --grain-dot: rgba(238, 229, 211, 0.05);
+  --card-shadow: rgba(0, 0, 0, 0.45);
+  --btn-shadow: rgba(0, 0, 0, 0.55);
 }
 
 body {
@@ -29,7 +72,7 @@ body {
   font-family: var(--font-serif);
   /* Faint paper grain + perforation feel */
   background-image:
-    radial-gradient(circle at 1px 1px, rgba(27, 26, 22, 0.04) 1px, transparent 0);
+    radial-gradient(circle at 1px 1px, var(--grain-dot) 1px, transparent 0);
   background-size: 4px 4px;
 }
 
@@ -37,7 +80,7 @@ body {
   .doc-card {
     background-color: var(--color-paper);
     border: 1px solid var(--color-rule);
-    box-shadow: 6px 6px 0 0 rgba(27, 26, 22, 0.12);
+    box-shadow: 6px 6px 0 0 var(--card-shadow);
   }
 
   .doc-rule {
@@ -96,7 +139,7 @@ body {
   }
   .btn:hover:not(:disabled) {
     transform: translate(-1px, -1px);
-    box-shadow: 3px 3px 0 0 rgba(27, 26, 22, 0.25);
+    box-shadow: 3px 3px 0 0 var(--btn-shadow);
   }
   .btn:disabled {
     opacity: 0.45;

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { recentRegistrations } from "@/lib/registry";
 import { RegistryApp } from "@/components/RegistryApp";
 
@@ -41,6 +42,7 @@ export default async function RegistryPage() {
             ◈ Adjuster
           </Link>
           <span className="eyebrow hidden sm:block">Evidence Registry · Proof of Real</span>
+          <ThemeToggle />
         </div>
       </header>
 

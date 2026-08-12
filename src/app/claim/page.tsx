@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { ClaimFlow } from "@/components/adjuster/ClaimFlow";
 
 export const metadata: Metadata = {
@@ -21,6 +22,7 @@ export default function ClaimPage() {
             <Link href="/desk" className="text-[var(--color-ink-faint)] hover:text-[var(--color-ink)]">
               Claims desk
             </Link>
+            <ThemeToggle />
           </nav>
         </div>
       </header>
