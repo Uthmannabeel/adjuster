@@ -1,22 +1,33 @@
 @import "tailwindcss";
 
 @theme {
-  --color-paper: #f4efe3;
-  --color-paper-2: #ece3d1;
-  --color-paper-3: #e3d8c0;
-  --color-ink: #1b1a16;
-  --color-ink-soft: #5b5648;
-  --color-ink-faint: #8a836f;
-  --color-rule: #c8bda1;
-  --color-stamp-green: #1f7a4d;
+  /* Rain-washed instrument paper — cool, overcast, Port Harcourt in the wet
+     season — not archive cream. The one dark surface is the chamber: the
+     sealed enclave. Light/dark on this page encodes public/sealed. */
+  --color-paper: #f2f4f3;
+  --color-paper-2: #e8ecea;
+  --color-paper-3: #dce2df;
+  --color-ink: #161c1e;
+  --color-ink-soft: #47534f;
+  --color-ink-faint: #7c8985;
+  --color-rule: #c2ccc7;
+  --color-stamp-green: #1e7a4f;
   --color-stamp-red: #b02a1f;
   --color-stamp-amber: #a9781b;
   /* Carbon-copy blue — the ink of duplicate insurance forms. Reserved for
      LIVE / in-progress states so the verdict stamps keep their meaning. */
   --color-carbon: #2b4a8b;
+  /* The sealed chamber and its indicator lamps. */
+  --color-chamber: #0c1214;
+  --color-chamber-2: #121a1d;
+  --color-chamber-rule: #223034;
+  --color-chamber-text: #b8c5c0;
+  --color-chamber-faint: #71837d;
+  --color-signal: #37c286;
 
-  --font-serif: Georgia, "Iowan Old Style", "Times New Roman", serif;
-  --font-mono: ui-monospace, "Geist Mono", "SF Mono", "Cascadia Code", Menlo, monospace;
+  --font-serif: var(--font-plex-serif), Georgia, "Iowan Old Style", serif;
+  --font-sans: var(--font-plex-sans), system-ui, "Segoe UI", sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, "SF Mono", Menlo, monospace;
 }
 
 :root {
@@ -26,10 +37,10 @@
 body {
   background-color: var(--color-paper);
   color: var(--color-ink);
-  font-family: var(--font-serif);
-  /* Faint paper grain + perforation feel */
+  font-family: var(--font-sans);
+  /* Faint paper grain — cold, like rain on a window */
   background-image:
-    radial-gradient(circle at 1px 1px, rgba(27, 26, 22, 0.04) 1px, transparent 0);
+    radial-gradient(circle at 1px 1px, rgba(22, 28, 30, 0.045) 1px, transparent 0);
   background-size: 4px 4px;
 }
 
@@ -37,7 +48,39 @@ body {
   .doc-card {
     background-color: var(--color-paper);
     border: 1px solid var(--color-rule);
-    box-shadow: 6px 6px 0 0 rgba(27, 26, 22, 0.12);
+    box-shadow:
+      0 1px 0 rgba(22, 28, 30, 0.06),
+      0 10px 24px -16px rgba(22, 28, 30, 0.35);
+  }
+
+  /* ── The sealed chamber — the one dark surface on the page ─────────── */
+  .chamber {
+    background-color: var(--color-chamber);
+    color: var(--color-chamber-text);
+    border: 1px solid var(--color-chamber-rule);
+  }
+  .chamber .eyebrow {
+    color: var(--color-chamber-faint);
+  }
+  .chamber-rule {
+    border-color: var(--color-chamber-rule);
+  }
+  /* Sealed-door hatching on the chamber's entry and exit edges */
+  .hatch {
+    background: repeating-linear-gradient(
+      -45deg,
+      var(--color-chamber-rule) 0 4px,
+      transparent 4px 9px
+    );
+  }
+  /* Indicator lamp — lit when a check passes inside the chamber */
+  .lamp {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 9999px;
+    background-color: var(--color-signal);
+    box-shadow: 0 0 8px 1px rgba(55, 194, 134, 0.55);
+    flex-shrink: 0;
   }
 
   .doc-rule {
