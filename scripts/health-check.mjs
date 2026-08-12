@@ -40,6 +40,15 @@ function envLocal(name) {
   }
 }
 
+/** A deployment record that has not been written yet is a missing file, not an error. */
+function readJson(path) {
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
 function argValue(flag) {
   const i = process.argv.indexOf(flag);
   return i !== -1 ? process.argv[i + 1] : null;
@@ -131,9 +140,29 @@ if (policyCount > 0) {
 }
 
 // --- attestation -----------------------------------------------------------
-// The image digest gates every real attestation. While it is the placeholder,
-// a genuine Confidential Space token cannot pass verifyAndAttest.
-const pinnedDigest = deployment.confidentialSpaceConfig?.imageDigest ?? "";
+// Ask the running enclave who it is before checking the chain: the in-enclave
+// key is regenerated on every boot, so any address recorded at deploy time goes
+// stale the moment the VM is replaced — and checking the wrong address would
+// report a healthy enclave as unattested, or worse, the reverse.
+const enclaveUrl = argValue("--enclave") ?? envLocal("NEXT_PUBLIC_ENCLAVE_URL");
+let enclaveHealth = null;
+if (enclaveUrl) {
+  try {
+    const response = await fetch(`${enclaveUrl.replace(/\/$/, "")}/health`, {
+      signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
+    });
+    if (response.ok) enclaveHealth = (await response.json())?.data ?? null;
+  } catch {
+    /* reported by the reachability check below */
+  }
+}
+
+// The image digest gates every real attestation. What matters is the digest of
+// the enclave actually deployed, not whatever the contract deployment recorded.
+const enclaveDeployment = readJson(join(root, "contracts", "deployment.enclave.json")) ?? {};
+const pinnedDigest = enclaveDeployment.imageDigest
+  ?? deployment.confidentialSpaceConfig?.imageDigest
+  ?? "";
 record(
   /^sha256:[0-9a-f]{64}$/.test(pinnedDigest) ? "PASS" : "WARN",
   "vTPM image digest pinned to a real image",
@@ -142,7 +171,7 @@ record(
     : pinnedDigest,
 );
 
-const teeAddress = argValue("--tee") ?? deployment.devTeeSigner;
+const teeAddress = argValue("--tee") ?? enclaveHealth?.teeAddress ?? deployment.devTeeSigner;
 if (deployment.flareVtpmAttestation && teeAddress) {
   const vtpm = new Contract(deployment.flareVtpmAttestation, VTPM_ABI, provider);
   try {
@@ -183,13 +212,35 @@ async function fetchCheck(label, url, validate) {
   }
 }
 
-const enclaveUrl = argValue("--enclave") ?? envLocal("NEXT_PUBLIC_ENCLAVE_URL");
 await fetchCheck("Enclave reachable", enclaveUrl && `${enclaveUrl.replace(/\/$/, "")}/health`, async (r) => {
-  const body = await r.json();
-  const attestation = body?.data?.attestation ?? {};
-  const attested = attestation.attested ?? attestation.onChainAttested ?? false;
-  return `attested=${attested}${attested ? "" : " (dev mode — not in Confidential Space)"}`;
+  const data = (await r.json())?.data ?? {};
+  const inTee = data.inConfidentialSpace === true;
+  const onChain = data.attestation?.onChain === true;
+  const where = inTee ? "in Confidential Space" : "dev mode — NOT in Confidential Space";
+  const chain = onChain
+    ? "attested on-chain"
+    : `not attested on-chain${data.attestation?.lastError ? ` — ${data.attestation.lastError}` : ""}`;
+  return `${where}, ${chain}`;
 });
+
+// The quote expires hourly and each renewal costs real gas, so an enclave that
+// is healthy today can go quietly unattested mid-judging. Watch the runway.
+if (enclaveHealth?.teeAddress && enclaveHealth.attestation?.enabled) {
+  try {
+    const balance = await withTimeout(provider.getBalance(enclaveHealth.teeAddress), "teeBalance");
+    const flr = Number(formatEther(balance));
+    // Measured on Coston2: ~1.92M gas at 650 gwei per renewal, once an hour.
+    const perDay = 1.25 * 24;
+    const daysLeft = flr / perDay;
+    record(
+      daysLeft >= 2 ? "PASS" : "WARN",
+      "Enclave has gas runway for re-attestation",
+      `${flr.toFixed(2)} C2FLR ≈ ${daysLeft.toFixed(1)} day(s) at ~${perDay.toFixed(0)}/day — top up with fund-tee.mjs`,
+    );
+  } catch (error) {
+    record("WARN", "Enclave has gas runway for re-attestation", error.message);
+  }
+}
 
 const appUrl = argValue("--app");
 await fetchCheck("App reachable", appUrl, async () => "200 OK");
