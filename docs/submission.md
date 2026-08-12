@@ -101,7 +101,7 @@ in it is clickable.
 | `FlareVtpmAttestation` | `0xdf7fb88FcE2a9457a1a174845d702bF91aC8E19A` |
 | `OidcSignatureVerification` | `0xf9b394C4583eD23A1b97f93428ea9A3e70Ad5A74` |
 | Enclave attestation tx | `0x36c4a969021dac90220cfac1a1a7390d014019acb4727bd8ee32be39b2b98919` |
-| Settled claims (photo → payout) | policy #3: `0x6883b850…8db9e914` · #5: `0xbb40b3b6…901762ce` · #11: `0xdeb5e8e8…3d05b7ee` |
+| Settled claims (photo → payout) | **#14 (fully attested TEE): `0x6b6f0a64…058557a6`** · #3: `0x6883b850…8db9e914` · #5: `0xbb40b3b6…901762ce` · #11: `0xdeb5e8e8…3d05b7ee` |
 
 Enclave: Google Confidential Space, c3-standard-4 Intel TDX, image pinned by digest
 on-chain; the on-chain quote's digest matches the running container.

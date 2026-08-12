@@ -52,7 +52,9 @@ Four Flare protocols, each load-bearing — remove any one and the product stops
 
 **The enclave runs in real Google Confidential Space** — a c3-standard-4 Intel TDX VM at [`enclave.agentarc.online`](https://enclave.agentarc.online/health), TLS terminated *inside* the enclave by a Let's Encrypt certificate whose key never exists outside TEE memory. Its in-enclave signing key registered its own vTPM quote on-chain: [`verifyAndAttest`, 12 Aug 2026](https://coston2-explorer.flare.network/tx/0x36c4a969021dac90220cfac1a1a7390d014019acb4727bd8ee32be39b2b98919) — the on-chain quote's image digest matches the running container image, and the quote renews itself hourly.
 
-Three claims have run the full lifecycle and paid out on-chain:
+Four claims have run the full lifecycle and paid out on-chain — the latest entirely through the attested enclave:
+
+- **Policy #14** — the first **fully-attested** claim: photo verified inside real Confidential Space (`attested=true`), evidence signed by the attested in-enclave key, FDC round 1423784 attested 10.4mm → [24.92 C2FLR paid, `evidenceAttested=true`](https://coston2-explorer.flare.network/tx/0x6b6f0a6403f1e57642bf744105ea24c43d624ecef0a8732c3b10cb19058557a6)
 
 - **Policy #3** — evidence accepted → FDC round 1401182 attested 11.7mm → [23.29 C2FLR paid](https://coston2-explorer.flare.network/tx/0x6883b850c70ca8637cf71ed208c388735d07fe48216129b6e0878cc78db9e914)
 - **Policy #5** — re-verified end-to-end through the serverless API routes → FDC round 1403092 → [22.45 C2FLR paid](https://coston2-explorer.flare.network/tx/0xbb40b3b67f3fb4b03989798d1786c9b4df0818118c5769cca3b7e8c4901762ce)
