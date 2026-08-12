@@ -8,7 +8,7 @@
 // its settlements without any owner having to vouch for the address.
 //
 // Quotes expire (~1 hour), so this runs as a loop and re-attests before expiry.
-import { Contract, JsonRpcProvider, Wallet } from "ethers";
+import { Contract, Interface, JsonRpcProvider, Wallet } from "ethers";
 import { fetchAttestationToken, inConfidentialSpace } from "./attestation.mjs";
 
 const VTPM_ABI = [
@@ -16,7 +16,65 @@ const VTPM_ABI = [
   "function getRegisteredQuote(address) view returns (tuple(bytes32 digest,"
   + " tuple(bytes hwmodel, bytes swname, bytes imageDigest, bytes iss, bool secboot) base,"
   + " uint256 exp, uint256 iat))",
+  // Without these the chain's reason arrives as "unknown custom error", which
+  // hides exactly the detail an operator needs. Every custom error reachable
+  // from verifyAndAttest is listed, across the whole vendored verification
+  // stack — the useful ones are the deep crypto failures, not the top-level checks.
+  "error PayloadValidationFailed(string errorMsg)",
+  "error SignatureVerificationFailed(string errorMsg)",
+  "error InvalidVerifier()",
+  "error InvalidAlgorithm()",
+  "error InvalidJWTFormat()",
+  "error InvalidJWTSignature()",
+  "error InvalidPadding()",
+  "error InvalidRSAKey()",
+  "error InvalidSignatureLength()",
+  "error DivisionByZero()",
+  "error InvalidBignumLength()",
+  "error NegativeNumber()",
+  "error InvalidBase64()",
+  "error InvalidCertificate()",
+  "error InvalidSignature()",
+  "error InvalidCertificateFormat()",
+  "error InvalidCertificateChainError(string message)",
+  "error ValidatePKIError(string message)",
+  "error InvalidX5CLength(uint256 length)",
+  "error NotOwner()",
 ];
+
+/** Prefer the decoded custom error, which names the specific failing check. */
+function revertMessage(error) {
+  const revert = error?.revert;
+  if (revert?.name) {
+    const args = (revert.args ?? []).map(String).filter(Boolean).join(", ");
+    return args ? `${revert.name}: ${args}` : revert.name;
+  }
+  return error?.shortMessage ?? error?.message ?? String(error);
+}
+
+/** Raw revert bytes, wherever ethers hung them off the error this time. */
+function revertData(error) {
+  const data = error?.data ?? error?.info?.error?.data ?? error?.error?.data ?? null;
+  return typeof data === "string" && data.startsWith("0x") ? data : null;
+}
+
+/**
+ * Decode the revert ourselves. Ethers does not always attach the contract's
+ * interface to a gas-estimation failure, and these errors carry the one string
+ * that says which check rejected the quote — losing it costs a deploy cycle.
+ */
+function decodeRevert(iface, error) {
+  const data = revertData(error);
+  if (!data) return null;
+  try {
+    const parsed = iface.parseError(data);
+    if (!parsed) return null;
+    const args = (parsed.args ?? []).map(String).filter(Boolean).join(", ");
+    return args ? `${parsed.name}: ${args}` : parsed.name;
+  } catch {
+    return null;
+  }
+}
 
 /** Re-attest this long before the quote expires. */
 const REFRESH_MARGIN_MS = 5 * 60 * 1000;
@@ -83,6 +141,8 @@ export function createAttestationState(address) {
     onChain: false,
     imageDigest: null,
     tokenImageDigest: null,
+    tokenBase: null,
+    lastRevertData: null,
     expiresAt: null,
     lastTxHash: null,
     lastAttemptAt: null,
@@ -91,10 +151,35 @@ export function createAttestationState(address) {
   };
 }
 
+/**
+ * The contract rejects a quote whose `iat` is ahead of `block.timestamp`. A
+ * token minted "now" loses that comparison against the latest block, which is
+ * always a second or two in the past — so gas estimation reverts with
+ * "Invalid issued at time" even though the transaction would be mined into a
+ * later, perfectly valid block. Let the chain catch up first.
+ */
+export async function waitForChainTime(provider, iatSeconds, options = {}) {
+  const { maxWaitMs = 90_000, pollMs = 2_000, now = () => Date.now() } = options;
+  if (!iatSeconds) return null;
+  const deadline = now() + maxWaitMs;
+  for (;;) {
+    const block = await provider.getBlock("latest");
+    if (block && Number(block.timestamp) >= iatSeconds) return Number(block.timestamp);
+    if (now() >= deadline) {
+      throw new Error(
+        `Chain time is still behind the token's issued-at (${iatSeconds}) after ${maxWaitMs}ms.`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+}
+
 /** Submit one attestation token to the chain and confirm the quote landed. */
 export async function attestOnce({ wallet, vtpmAddress, token, state }) {
   const { header, payload, signature } = splitJwt(token);
   const vtpm = new Contract(vtpmAddress, VTPM_ABI, wallet);
+
+  await waitForChainTime(wallet.provider, jwtClaims(token).iat);
 
   const tx = await vtpm.verifyAndAttest(header, payload, signature);
   await tx.wait();
@@ -153,7 +238,16 @@ export function startAttestationLoop({
       // Record what Google says is running here even if the chain later rejects
       // it — on first deploy that mismatch IS the answer, and set-image-digest
       // reads this value to fix it.
-      state.tokenImageDigest = jwtClaims(token).submods?.container?.image_digest ?? null;
+      const claims = jwtClaims(token);
+      state.tokenImageDigest = claims.submods?.container?.image_digest ?? null;
+      // The four values the chain's base config must match exactly. Publishing
+      // them turns "execution reverted" into a diff an operator can read.
+      state.tokenBase = {
+        hwmodel: claims.hwmodel ?? null,
+        swname: claims.swname ?? null,
+        iss: claims.iss ?? null,
+        secboot: claims.secboot ?? null,
+      };
 
       const { exp, imageDigest, txHash } = await attestOnce({ wallet, vtpmAddress, token, state });
       attempt = 0;
@@ -161,9 +255,11 @@ export function startAttestationLoop({
       schedule(refreshDelayMs(exp));
     } catch (error) {
       attempt += 1;
-      const message = error.shortMessage ?? error.message ?? String(error);
+      const iface = new Interface(VTPM_ABI);
+      const message = decodeRevert(iface, error) ?? revertMessage(error);
       state.onChain = false;
       state.lastError = message;
+      state.lastRevertData = revertData(error);
       state.hint = explainAttestError(message);
       logger.error(`attestation: attempt ${attempt} failed — ${message}${state.hint ? ` | ${state.hint}` : ""}`);
       schedule(backoffMs(attempt));

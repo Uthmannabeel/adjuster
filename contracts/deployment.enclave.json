@@ -1,0 +1,17 @@
+{
+  "project": "adjuster-flare",
+  "registryUrl": "https://adjuster.agentarc.online",
+  "zone": "us-central1-a",
+  "region": "us-central1",
+  "serviceAccount": "adjuster-enclave@adjuster-flare.iam.gserviceaccount.com",
+  "imagePath": "us-central1-docker.pkg.dev/adjuster-flare/adjuster/enclave",
+  "tag": "v1",
+  "imageDigest": "sha256:18c78fcac8b1bf2b7b537ec9bee30f3ec5c0f7c47afad5b2ab461b60525109b0",
+  "staticIp": "35.184.55.248",
+  "staticIpName": "adjuster-enclave-ip",
+  "tlsDomain": "enclave.agentarc.online",
+  "enclaveIp": "35.184.55.248",
+  "enclaveUrl": "https://enclave.agentarc.online",
+  "teeAddress": "0x38947bF254cACcE41Ae095A0906d5f02a97328C2",
+  "publicUrl": "https://enclave.agentarc.online"
+}

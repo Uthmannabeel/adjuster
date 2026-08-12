@@ -6,6 +6,7 @@ import {
   jwtClaims,
   refreshDelayMs,
   splitJwt,
+  waitForChainTime,
 } from "./attest.mjs";
 
 /** A JWT shaped like a Confidential Space token (unsigned — only bytes matter here). */
@@ -100,5 +101,37 @@ describe("createAttestationState", () => {
   test("starts unattested — an enclave claims nothing until the chain says so", () => {
     const state = createAttestationState("0xabc");
     expect(state).toMatchObject({ address: "0xabc", enabled: false, onChain: false, lastTxHash: null });
+  });
+});
+
+describe("waitForChainTime", () => {
+  const provider = (timestamps) => {
+    const queue = [...timestamps];
+    return { getBlock: async () => ({ timestamp: queue.length > 1 ? queue.shift() : queue[0] }) };
+  };
+
+  test("returns immediately when the chain has already passed the issued-at", async () => {
+    const reached = await waitForChainTime(provider([1_000]), 900, { pollMs: 0 });
+
+    expect(reached).toBe(1_000);
+  });
+
+  test("waits for the block clock to catch up rather than reverting on a stale block", async () => {
+    // The exact failure seen in deployment: a token minted "now" loses the
+    // iat > block.timestamp comparison against a block a couple of seconds old.
+    const reached = await waitForChainTime(provider([998, 999, 1_000]), 1_000, { pollMs: 0 });
+
+    expect(reached).toBe(1_000);
+  });
+
+  test("gives up rather than spinning forever if the chain never catches up", async () => {
+    let clock = 0;
+    await expect(
+      waitForChainTime(provider([10]), 999_999, { pollMs: 0, maxWaitMs: 50, now: () => (clock += 30) }),
+    ).rejects.toThrow(/still behind/);
+  });
+
+  test("does nothing when the token carries no issued-at", async () => {
+    expect(await waitForChainTime(provider([1]), undefined)).toBe(null);
   });
 });

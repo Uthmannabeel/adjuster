@@ -475,50 +475,59 @@ async function wait() {
   ]);
   if (!ipQuery.ok || !ipQuery.out) fail("Could not read the instance external IP.", ipQuery.err);
   ctx.ip = ipQuery.out;
-  const url = `http://${ctx.ip}:8080`;
-  writeState({ enclaveIp: ctx.ip, enclaveUrl: url });
+  // Prefer the TLS name: the plaintext port is reachable from the VM's network
+  // but not necessarily from wherever this script runs — an intercepting proxy
+  // will happily 403 plain HTTP to an IP on a non-standard port.
+  const tlsDomain = arg("--tls-domain") ?? readState().tlsDomain;
+  const candidates = [
+    ...(tlsDomain ? [`https://${tlsDomain}`] : []),
+    `http://${ctx.ip}:8080`,
+  ];
+  writeState({ enclaveIp: ctx.ip });
   log.ok(`external IP ${ctx.ip}`);
 
   // Confidential Space pulls the image and starts the workload after boot;
   // first boot is the slow one.
-  log.warn(`waiting for ${url}/health — Confidential Space first boot takes ~2-4 min`);
+  log.warn(`waiting for ${candidates.join(" or ")} — first boot takes ~2-4 min`);
   const deadline = Date.now() + 8 * 60 * 1000;
   for (let attempt = 1; ; attempt += 1) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5000);
-    try {
-      const res = await fetch(`${url}/health`, { signal: controller.signal });
-      if (res.ok) {
+    for (const base of candidates) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      try {
+        const res = await fetch(`${base}/health`, { signal: controller.signal });
+        if (!res.ok) continue;
         const health = await res.json();
         const att = health?.data?.attestation ?? {};
-        log.ok(`enclave responding — inConfidentialSpace=${att.inConfidentialSpace ?? "?"}`);
+        log.ok(`enclave responding on ${base}`);
+        log.ok(`inConfidentialSpace=${health?.data?.inConfidentialSpace ?? "?"}`);
         if (att.tokenImageDigest) log.ok(`token image digest ${att.tokenImageDigest}`);
         if (health?.data?.teeAddress) {
           log.ok(`in-enclave TEE address ${health.data.teeAddress}`);
           writeState({ teeAddress: health.data.teeAddress });
         }
 
-        // The browser-facing URL is the TLS one when the enclave got a cert;
-        // ops scripts keep using the plaintext health port either way.
+        // Ops scripts talk to whichever base actually answered from here; the
+        // browser-facing URL is the TLS one whenever the enclave got a cert.
         const tls = health?.data?.tls ?? {};
         if (tls.active) {
           log.ok(`TLS active — ${tls.url}${tls.staging ? " (STAGING cert, untrusted)" : ""}`);
-          writeState({ publicUrl: tls.url });
+          writeState({ enclaveUrl: base, publicUrl: tls.url });
         } else {
           log.warn(`TLS not active — ${tls.reason ?? "unknown"}`);
           log.warn("an HTTPS app will not be able to reach this enclave from a browser");
-          writeState({ publicUrl: url });
+          writeState({ enclaveUrl: base, publicUrl: base });
         }
         return;
+      } catch {
+        /* not up yet, or unreachable from here */
+      } finally {
+        clearTimeout(timer);
       }
-    } catch {
-      /* not up yet */
-    } finally {
-      clearTimeout(timer);
     }
     if (Date.now() > deadline) {
       fail(
-        `${url}/health never came up.`,
+        `None of ${candidates.join(", ")} answered /health.`,
         `Check the workload log:\n`
         + `  gcloud compute instances get-serial-port-output ${CFG.vm} --zone=${CFG.zone} | Select-String tee`,
       );
@@ -529,16 +538,20 @@ async function wait() {
 }
 
 function pin() {
-  const url = readState().enclaveUrl;
-  if (!url) fail("No enclave URL on record — run the wait stage first.");
-  log.warn("pinning the on-chain required image digest to the running enclave");
-  const r = spawnSync(process.execPath, [join(root, "scripts", "set-image-digest.mjs"), "--from", url], {
+  const state = readState();
+  // Pin from the digest we pushed, not from the enclave's attestation token:
+  // the enclave cannot obtain a usable quote until the chain already names this
+  // digest, so asking it first is circular. Both values are the same image.
+  const digest = ctx.digest ?? state.imageDigest;
+  if (!digest) fail("No image digest on record — run the build stage first.");
+  log.warn(`pinning the on-chain required image digest to ${digest}`);
+  const r = spawnSync(process.execPath, [join(root, "scripts", "set-image-digest.mjs"), "--digest", digest], {
     cwd: root, stdio: "inherit", env: { ...process.env, NODE_OPTIONS: "--use-system-ca" },
   });
   if (r.status !== 0) fail("set-image-digest.mjs failed.");
 }
 
-function fund() {
+async function fund() {
   const url = readState().enclaveUrl;
   log.warn("funding the in-enclave key so it can pay for its own attestation tx");
   const r = spawnSync(process.execPath, [join(root, "scripts", "fund-tee.mjs"), "--from", url], {
@@ -547,9 +560,23 @@ function fund() {
   if (r.status !== 0) fail("fund-tee.mjs failed.");
   const state = readState();
   const publicUrl = state.publicUrl ?? state.enclaveUrl;
+
+  // The in-enclave key is regenerated on every boot, so recorded state goes
+  // stale the moment the VM is replaced — ask the enclave who it is now.
+  let live = null;
+  try {
+    const res = await fetchRetry(`${state.enclaveUrl}/health`, {}, 2);
+    const health = await res.json();
+    live = health?.data ?? null;
+    if (live?.teeAddress) writeState({ teeAddress: live.teeAddress });
+  } catch {
+    /* fall back to recorded state */
+  }
+
   console.log(`\n\x1b[1mEnclave live:\x1b[0m ${publicUrl}`);
   console.log(`  image  ${state.imagePath}@${state.imageDigest}`);
-  console.log(`  TEE    ${state.teeAddress ?? "(read /health)"}`);
+  console.log(`  TEE    ${live?.teeAddress ?? state.teeAddress ?? "(read /health)"}`);
+  console.log(`  attested on-chain  ${live?.attestation?.onChain ?? "?"}`);
   console.log(`  ops    ${state.enclaveUrl}/health`);
   console.log(`\nSet on the app deployment:  NEXT_PUBLIC_ENCLAVE_URL=${publicUrl}`);
   console.log(`Then watch attestation land: node scripts/health-check.mjs --enclave ${state.enclaveUrl}\n`);
