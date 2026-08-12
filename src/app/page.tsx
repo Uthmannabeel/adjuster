@@ -129,12 +129,18 @@ export default function Home() {
                 <p className="mono text-[0.72rem] text-[var(--color-ink-faint)] mt-1">
                   in adjustment costs · paid in 10–30 days
                 </p>
+                <p className="mono text-[0.68rem] text-[var(--color-ink-faint)] mt-3 pt-3 border-t border-[var(--color-rule)] leading-relaxed">
+                  notice → forms → adjuster visit → review → negotiation → cheque
+                </p>
               </div>
               <div className="p-5 bg-[var(--color-paper-2)]">
                 <p className="eyebrow">An Adjuster claim</p>
                 <p className="font-serif text-3xl mt-2">&lt; $0.01</p>
                 <p className="mono text-[0.72rem] text-[var(--color-ink-faint)] mt-1">
                   in gas · paid in about 4 minutes
+                </p>
+                <p className="mono text-[0.68rem] text-[var(--color-ink-faint)] mt-3 pt-3 border-t border-[var(--color-rule)] leading-relaxed">
+                  photograph → verified in the enclave → paid
                 </p>
               </div>
             </div>
@@ -153,6 +159,31 @@ export default function Home() {
           <p className="mono text-[0.68rem] text-[var(--color-ink-faint)] mt-5 doc-rule border-b-0 border-t pt-3">
             Settled end-to-end on Coston2, 20 Jul 2026 — every link above is checkable on the
             explorer.
+          </p>
+        </div>
+      </section>
+
+      {/* The gap it closes · the record so far */}
+      <section className="border-t border-[var(--color-rule)] bg-[var(--color-paper-2)]">
+        <div className="max-w-6xl mx-auto px-6 py-5 grid sm:grid-cols-2 gap-x-10 gap-y-4">
+          <p className="mono text-[0.72rem] leading-relaxed text-[var(--color-ink-soft)]">
+            <span className="eyebrow block mb-1">The gap</span>
+            398 natural disasters in 2023 · $380B in losses · 69% of it uninsured —{" "}
+            <a
+              className="underline underline-offset-2"
+              href="https://www.aon.com/en/insights/reports/climate-and-catastrophe-report"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Aon, Climate &amp; Catastrophe Insight
+            </a>
+          </p>
+          <p className="mono text-[0.72rem] leading-relaxed text-[var(--color-ink-soft)]">
+            <span className="eyebrow block mb-1">On the record — Coston2, 12 Aug 2026</span>
+            4 claims settled on-chain · 95.8 C2FLR paid · attested TEE live ·{" "}
+            <Link href="/desk" className="underline underline-offset-2">
+              read it live on the claims desk
+            </Link>
           </p>
         </div>
       </section>
