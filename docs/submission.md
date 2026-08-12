@@ -90,8 +90,13 @@ attestation gating with Google's live OIDC keys registered on-chain, the
 Confidential Space enclave (in-enclave EXIF forensics, cross-claim perceptual-hash
 fraud detection, degenerate-fingerprint rejection, in-enclave ACME TLS so no proxy
 ever holds a plaintext image), the one-command TDX deploy tooling, and all three
-product surfaces. Dated, commit-linked record: `docs/work-ledger.md` — every claim
-in it is clickable.
+product surfaces. A final hardening pass closed four attack surfaces we found by
+auditing our own limitations: image decoding isolated in a secret-free child
+process (a parser exploit can no longer reach the signing key), retry-masking in
+fraud detection fixed and regression-tested, hash lookups key-gated against
+membership probing, and a pre-upload gate that verifies the enclave's on-chain
+vTPM quote *before* the browser sends a photograph. Dated, commit-linked record:
+`docs/work-ledger.md` — every claim in it is clickable.
 
 ## Contract addresses and deployment details (Coston2)
 

@@ -559,7 +559,10 @@ function pin() {
 async function fund() {
   const url = readState().enclaveUrl;
   log.warn("funding the in-enclave key so it can pay for its own attestation tx");
-  const r = spawnSync(process.execPath, [join(root, "scripts", "fund-tee.mjs"), "--from", url], {
+  // Target well above the ~3 C2FLR the attestation tx must RESERVE (ethers
+  // holds gasLimit × maxFeePerGas): a fresh key funded to the old default of 2
+  // sits just under the reserve and never attests.
+  const r = spawnSync(process.execPath, [join(root, "scripts", "fund-tee.mjs"), "--from", url, "--target", "15"], {
     cwd: root, stdio: "inherit", env: { ...process.env, NODE_OPTIONS: "--use-system-ca" },
   });
   if (r.status !== 0) fail("fund-tee.mjs failed.");
