@@ -4,15 +4,11 @@ import { EvidenceChain, type Station } from "@/components/adjuster/EvidenceChain
 export const dynamic = "force-dynamic";
 
 /**
- * The specimen is a REAL claim: policy № 14, settled on Coston2 on 12 Aug 2026 —
- * the first claim verified inside real Confidential Space, evidence signed by a
- * key that proved itself on-chain. 10.4 mm attested in FDC round 1423784 →
- * 24.92 C2FLR paid with evidenceAttested=true.
+ * The specimen is a REAL claim: policy № 3, settled on Coston2 on 20 Jul 2026.
+ * 11.7 mm rainfall attested in FDC round 1401182 → 23.29 C2FLR paid.
  */
 const SPECIMEN_SETTLE_TX =
-  "https://coston2-explorer.flare.network/tx/0x6b6f0a6403f1e57642bf744105ea24c43d624ecef0a8732c3b10cb19058557a6";
-const ATTEST_TX =
-  "https://coston2-explorer.flare.network/tx/0x36c4a969021dac90220cfac1a1a7390d014019acb4727bd8ee32be39b2b98919";
+  "https://coston2-explorer.flare.network/tx/0x6883b850c70ca8637cf71ed208c388735d07fe48216129b6e0878cc78db9e914";
 
 const SPECIMEN: Station[] = [
   {
@@ -26,9 +22,9 @@ const SPECIMEN: Station[] = [
     title: "Confidential verification",
     status: "done",
     lines: [
-      { text: "At the insured address · on the coverage date", tone: "green" },
+      { text: "0.52 km from the insured address · on the coverage date", tone: "green" },
       { text: "No reuse across prior claims (perceptual match sweep)", tone: "green" },
-      { text: "Verified in a real TEE — attested on-chain, not asserted", tone: "green" },
+      { text: "Verified in enclave memory — the photo never left it", tone: "green" },
     ],
   },
   {
@@ -41,13 +37,36 @@ const SPECIMEN: Station[] = [
     id: "weather",
     title: "Weather attested by Flare",
     status: "done",
-    lines: [{ text: "10.4 mm rainfall attested · FDC round 1423784 · threshold 5.0 mm", tone: "green" }],
+    lines: [{ text: "11.7 mm rainfall attested · FDC round 1401182 · threshold 5.0 mm", tone: "green" }],
   },
   {
     id: "payout",
     title: "Payout",
     status: "done",
-    lines: [{ text: "24.92 C2FLR paid — settled 12 Aug 2026", href: SPECIMEN_SETTLE_TX, tone: "green" }],
+    lines: [{ text: "23.29 C2FLR paid — settled 20 Jul 2026", href: SPECIMEN_SETTLE_TX, tone: "green" }],
+  },
+];
+
+const STEPS = [
+  {
+    n: "01",
+    title: "One photograph is the claim",
+    body: "The claimant photographs the damage. GPS and capture time ride along in the file's EXIF — nothing else is asked for.",
+  },
+  {
+    n: "02",
+    title: "A confidential enclave adjusts it",
+    body: "The photo goes straight to a TEE (Google Confidential Space), which checks the location against the policy, the date against coverage, and the image against every prior claim — catching recycled evidence by perceptual fingerprint. The photo is never stored, and never seen by the insurer.",
+  },
+  {
+    n: "03",
+    title: "The chain checks the adjuster",
+    body: "The enclave signs its verdict in Flare's FCC wire format. ClaimPayout recovers the signer and verifies its vTPM attestation on-chain — a spoofed enclave is rejected in the same block it tries.",
+  },
+  {
+    n: "04",
+    title: "The weather testifies, the payout executes",
+    body: "Flare's Data Connector attests rainfall at the insured location and date (Web2Json), the contract verifies the Merkle proof itself, FTSOv2 converts the USD payout, and the funds move.",
   },
 ];
 
@@ -81,7 +100,7 @@ export default function Home() {
       <section className="max-w-6xl mx-auto px-6 pt-14 pb-16 grid lg:grid-cols-[1.1fr_1fr] gap-10 items-start">
         <div>
           <p className="eyebrow">Confidential parametric insurance · Flare Coston2</p>
-          <h1 className="font-serif font-semibold text-5xl sm:text-6xl leading-[1.04] mt-4">
+          <h1 className="font-serif text-5xl sm:text-6xl leading-[1.04] mt-4">
             The claim that
             <br />
             settles <span className="italic">itself.</span>
@@ -131,15 +150,14 @@ export default function Home() {
         <div className="doc-card p-6 relative">
           <div className="doc-rule pb-3 mb-5 flex items-start justify-between gap-4">
             <div>
-              <p className="eyebrow">Claim file · Policy № 14</p>
+              <p className="eyebrow">Claim file · Policy № 3</p>
               <h2 className="font-serif text-2xl mt-0.5">A real claim, settled.</h2>
             </div>
             <span className="stamp stamp-green shrink-0">Paid</span>
           </div>
           <EvidenceChain stations={SPECIMEN} />
           <p className="mono text-[0.68rem] text-[var(--color-ink-faint)] mt-5 doc-rule border-b-0 border-t pt-3">
-            Settled end-to-end on Coston2, 12 Aug 2026 — verified in real Confidential Space;
-            every link above is checkable on the
+            Settled end-to-end on Coston2, 20 Jul 2026 — every link above is checkable on the
             explorer.
           </p>
         </div>
@@ -170,110 +188,23 @@ export default function Home() {
         </div>
       </section>
 
-      {/* How a claim moves — the sealed chamber */}
+      {/* How a claim moves */}
       <section className="border-t border-[var(--color-rule)]">
         <div className="max-w-6xl mx-auto px-6 py-14">
-          <div className="doc-rule pb-3 mb-8 flex flex-wrap justify-between gap-2">
+          <div className="doc-rule pb-3 mb-8">
             <h2 className="eyebrow">How a claim moves</h2>
-            <p className="eyebrow">One photograph in · one signed verdict out</p>
           </div>
-
-          <div className="grid lg:grid-cols-[1fr_auto_1.5fr_auto_1.2fr] gap-0 items-stretch">
-            {/* Before the chamber */}
-            <div className="doc-card p-6 flex flex-col">
-              <p className="eyebrow">The claim</p>
-              <h3 className="font-serif font-semibold text-2xl mt-2 leading-snug">
-                One photograph.
-              </h3>
-              <p className="text-[var(--color-ink-soft)] text-sm mt-3 leading-relaxed">
-                The claimant photographs the damage. GPS and capture time ride along in the
-                file&rsquo;s EXIF — nothing else is asked for, and it goes straight from their
-                phone to the chamber.
-              </p>
-              <p className="mono text-[0.68rem] text-[var(--color-ink-faint)] mt-auto pt-4">
-                never touches our servers →
-              </p>
-            </div>
-
-            {/* Entry seal */}
-            <div className="hidden lg:block w-4 hatch" aria-hidden />
-
-            {/* The sealed chamber */}
-            <div className="chamber p-6 flex flex-col">
-              <div className="flex items-start justify-between gap-4 border-b chamber-rule pb-3">
-                <div>
-                  <p className="eyebrow">The sealed chamber</p>
-                  <h3 className="font-serif font-semibold text-2xl mt-1 text-[var(--color-paper)] leading-snug">
-                    No one can enter. It can prove that.
-                  </h3>
-                </div>
+          <div className="grid sm:grid-cols-2 gap-5">
+            {STEPS.map((step) => (
+              <div key={step.n} className="doc-card p-6">
+                <p className="mono text-[var(--color-ink-faint)] text-2xl">{step.n}</p>
+                <h3 className="font-serif text-2xl mt-2">{step.title}</h3>
+                <p className="text-[var(--color-ink-soft)] text-sm mt-2 leading-relaxed">
+                  {step.body}
+                </p>
               </div>
-              <ul className="mono text-[0.8rem] mt-4 space-y-3">
-                <li className="flex items-start gap-3">
-                  <span className="lamp mt-1" aria-hidden />
-                  location — at the insured address, read from the contract
-                </li>
-                <li className="flex items-start gap-3">
-                  <span className="lamp mt-1" aria-hidden />
-                  date — inside the coverage window
-                </li>
-                <li className="flex items-start gap-3">
-                  <span className="lamp mt-1" aria-hidden />
-                  reuse — never filed on any policy before, by fingerprint
-                </li>
-              </ul>
-              <p className="text-sm mt-4 leading-relaxed">
-                Google Confidential Space on Intel TDX. The photograph is examined in enclave
-                memory and never leaves this room — the registry outside sees only hashes.
-              </p>
-              <p className="mono text-[0.68rem] text-[var(--color-chamber-faint)] mt-auto pt-4">
-                signing key born inside · quote{" "}
-                <a
-                  className="underline underline-offset-2"
-                  href={ATTEST_TX}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  attested on-chain ↗
-                </a>{" "}
-                · renewed hourly
-              </p>
-            </div>
-
-            {/* Exit seal */}
-            <div className="hidden lg:block w-4 hatch" aria-hidden />
-
-            {/* After the chamber */}
-            <div className="doc-card p-6 flex flex-col">
-              <p className="eyebrow">The verdict — checked by the chain</p>
-              <ul className="mono text-[0.74rem] mt-3 space-y-3 leading-relaxed">
-                <li className="doc-rule pb-3">
-                  <span className="text-[var(--color-ink)]">ClaimPayout</span> recovers the signer
-                  and demands a live vTPM attestation — a spoofed enclave reverts in the same
-                  block.
-                </li>
-                <li className="doc-rule pb-3">
-                  <span className="text-[var(--color-ink)]">FDC</span>{" "}attests the rainfall:
-                  10.4&nbsp;mm at the insured location ≥ the 5.0&nbsp;mm trigger.
-                </li>
-                <li>
-                  <span className="text-[var(--color-ink)]">FTSOv2</span> converts the payout —{" "}
-                  <a
-                    className="underline underline-offset-2 text-[var(--color-stamp-green)]"
-                    href={SPECIMEN_SETTLE_TX}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    24.92 C2FLR paid ↗
-                  </a>
-                </li>
-              </ul>
-              <p className="mono text-[0.68rem] text-[var(--color-ink-faint)] mt-auto pt-4">
-                about 4 minutes, end to end
-              </p>
-            </div>
+            ))}
           </div>
-
           <p className="mono text-[0.72rem] text-[var(--color-ink-soft)] mt-6">
             Four Flare protocols carry load: vTPM attestation verification (on-chain TEE proof) ·
             FCC ActionResult wire format (enclave settlements) · FDC Web2Json (weather) · FTSOv2
