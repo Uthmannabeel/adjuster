@@ -50,6 +50,8 @@ Four Flare protocols, each load-bearing — remove any one and the product stops
 | `FlareVtpmAttestation` | [`0xdf7fb88FcE2a9457a1a174845d702bF91aC8E19A`](https://coston2-explorer.flare.network/address/0xdf7fb88FcE2a9457a1a174845d702bF91aC8E19A) |
 | `OidcSignatureVerification` | [`0xf9b394C4583eD23A1b97f93428ea9A3e70Ad5A74`](https://coston2-explorer.flare.network/address/0xf9b394C4583eD23A1b97f93428ea9A3e70Ad5A74) |
 
+**The enclave runs in real Google Confidential Space** — a c3-standard-4 Intel TDX VM at [`enclave.agentarc.online`](https://enclave.agentarc.online/health), TLS terminated *inside* the enclave by a Let's Encrypt certificate whose key never exists outside TEE memory. Its in-enclave signing key registered its own vTPM quote on-chain: [`verifyAndAttest`, 12 Aug 2026](https://coston2-explorer.flare.network/tx/0x36c4a969021dac90220cfac1a1a7390d014019acb4727bd8ee32be39b2b98919) — the on-chain quote's image digest matches the running container image, and the quote renews itself hourly.
+
 Three claims have run the full lifecycle and paid out on-chain:
 
 - **Policy #3** — evidence accepted → FDC round 1401182 attested 11.7mm → [23.29 C2FLR paid](https://coston2-explorer.flare.network/tx/0x6883b850c70ca8637cf71ed208c388735d07fe48216129b6e0878cc78db9e914)
@@ -80,7 +82,7 @@ Surfaces: `/` the pitch and a real settled claim · `/claim` the claimant flow �
 
 ```bash
 npm install
-npm test                 # 91 unit tests
+npm test                 # 102 unit tests
 npm run dev              # the app
 
 cd enclave && npm install && node server.mjs    # the verifier, dev mode (attested=false)
@@ -109,7 +111,7 @@ This project began as **Proof of Real**, a media-provenance registry built for a
 
 Stated because a demo that overclaims is worth less than one that doesn't.
 
-- **The enclave has not yet run in real Confidential Space.** The attestation path is fully implemented and the four live Google Confidential Space signing keys are registered on-chain, but the deployment is blocked on cloud billing, so verdicts currently come from the dev-signer path and report `attested=false`. The contract records attested-versus-dev on every settlement rather than hiding the difference. **Nothing in this README claims an attestation that has happened.**
+- **Attestation quotes expire hourly and cost real gas to renew** (~1.9M gas per RS256 verification, roughly 30 C2FLR/day at recent base fees). The enclave re-attests itself automatically, but if its in-enclave wallet runs dry the quote lapses and evidence submission reverts until it is refunded — fail-closed, by design, and visible on `/desk`. The signing key is ephemeral: every enclave boot generates a fresh key inside the TEE that must earn attestation again.
 - **Testnet only.** Coston2, test funds, not production insurance.
 - The demo relays transactions from a server wallet so a judge needs no wallet — a custody shortcut, not a design.
 - dHash is defeated by cropping and rotation; it catches re-encoding, resizing, and light edits.
@@ -122,7 +124,7 @@ Stated because a demo that overclaims is worth less than one that doesn't.
 
 ## Roadmap
 
-Confidential Space deployment and real attestation · registration as a genuine FCC extension on Coston2 · a C2PA-conformant Soft Binding Resolution API endpoint ([ISO/IEC 22144](https://c2pa.org/) defines exactly the hard and soft bindings used here) · FXRP payouts · multi-node verifier agreement.
+Registration as a genuine FCC extension on Coston2 · a C2PA-conformant Soft Binding Resolution API endpoint ([ISO/IEC 22144](https://c2pa.org/) defines exactly the hard and soft bindings used here) · FXRP payouts · multi-node verifier agreement.
 
 ## License
 
