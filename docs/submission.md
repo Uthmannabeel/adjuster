@@ -105,7 +105,7 @@ vTPM quote *before* the browser sends a photograph. Dated, commit-linked record:
 | `ClaimPayout` | `0x8af8843C9F2474F0528970161bc4C1db62e3B8b9` |
 | `FlareVtpmAttestation` | `0xdf7fb88FcE2a9457a1a174845d702bF91aC8E19A` |
 | `OidcSignatureVerification` | `0xf9b394C4583eD23A1b97f93428ea9A3e70Ad5A74` |
-| Enclave attestation tx | `0x36c4a969021dac90220cfac1a1a7390d014019acb4727bd8ee32be39b2b98919` |
+| Enclave attestation tx (current image) | `0xdc81f580643a4e63f59ccceab0200e2dd0c92d8f255e683b9e181bcae6c8aa49` |
 | Settled claims (photo → payout) | **#14 (fully attested TEE): `0x6b6f0a64…058557a6`** · #3: `0x6883b850…8db9e914` · #5: `0xbb40b3b6…901762ce` · #11: `0xdeb5e8e8…3d05b7ee` |
 
 Enclave: Google Confidential Space, c3-standard-4 Intel TDX, image pinned by digest
