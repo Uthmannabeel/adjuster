@@ -163,9 +163,15 @@ const enclaveDeployment = readJson(join(root, "contracts", "deployment.enclave.j
 const pinnedDigest = enclaveDeployment.imageDigest
   ?? deployment.confidentialSpaceConfig?.imageDigest
   ?? "";
+// This is the LOCAL deployment record only — the contract's required digest is
+// internal storage with no getter, so the chain cannot be asked directly. The
+// live-quote check below is the real proof: a quote can only register while the
+// enclave's digest matches the on-chain requirement, so an unexpired quote whose
+// digest equals this one confirms the pin. (2026-08-13: the local record said
+// 0bf838cc while the chain still required 55d698 — this check alone is not enough.)
 record(
   /^sha256:[0-9a-f]{64}$/.test(pinnedDigest) ? "PASS" : "WARN",
-  "vTPM image digest pinned to a real image",
+  "vTPM image digest recorded locally (chain value not directly readable)",
   pinnedDigest.startsWith("sha256:pending")
     ? "still the placeholder — run set-image-digest.mjs after the Confidential Space build"
     : pinnedDigest,
@@ -188,6 +194,19 @@ if (deployment.flareVtpmAttestation && teeAddress) {
           ? `${Math.floor(secondsLeft / 60)} min remaining (${teeAddress})`
           : `expired ${Math.floor(-secondsLeft / 60)} min ago — the enclave re-attestation loop should renew it`,
       );
+      // The quote's digest was validated against the contract's internal
+      // required digest when it registered — comparing it to the local record
+      // is the only way to confirm the on-chain pin matches what we deployed.
+      const quoteDigest = Buffer.from(quote.base.imageDigest.slice(2), "hex").toString("utf8");
+      if (secondsLeft > 0) {
+        record(
+          quoteDigest === pinnedDigest ? "PASS" : "FAIL",
+          "On-chain attested digest matches local deployment record",
+          quoteDigest === pinnedDigest
+            ? quoteDigest
+            : `chain attested ${quoteDigest} but local record says ${pinnedDigest} — re-run set-image-digest.mjs or redeploy`,
+        );
+      }
     }
   } catch (error) {
     record("WARN", "TEE has a live attestation quote", error.message);
