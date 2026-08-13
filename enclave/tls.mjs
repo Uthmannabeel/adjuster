@@ -78,6 +78,12 @@ async function issueCertificate({ domain, email, staging, tokens }) {
     email: email ?? undefined,
     termsOfServiceAgreed: true,
     challengePriority: ["http-01"],
+    // The library's pre-flight fetches the challenge through the VM's own
+    // public address — a hairpin GCP does not reliably support, and a silent
+    // hang here kept the enclave stuck at "issuing" through two boots. Let's
+    // Encrypt's validators reach the challenge from OUTSIDE, which is the only
+    // path that matters; skip the self-check.
+    skipChallengeVerification: true,
     challengeCreateFn: async (_authz, challenge, keyAuthorization) => {
       tokens.set(challenge.token, keyAuthorization);
     },
@@ -87,6 +93,20 @@ async function issueCertificate({ domain, email, staging, tokens }) {
   });
 
   return { key: certificateKey.toString(), cert: certificate.toString() };
+}
+
+const ISSUE_ATTEMPT_TIMEOUT_MS = 3 * 60 * 1000;
+const RETRY_BASE_MS = 30 * 1000;
+const RETRY_CAP_MS = 10 * 60 * 1000;
+
+function withDeadline(promise, ms, label) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
 }
 
 /**
@@ -110,12 +130,25 @@ export async function startTls(handler, config = tlsConfig()) {
     return { active: false, reason: `could not bind :${config.challengePort} — ${error.message}` };
   }
 
-  let material;
-  try {
-    material = await issueCertificate({ ...config, tokens });
-  } catch (error) {
-    challengeServer.close();
-    return { active: false, reason: `certificate issuance failed — ${error.message}` };
+  // Issuance retries forever with capped backoff and a hard per-attempt
+  // deadline: a hung ACME order or a transient Let's Encrypt outage must never
+  // leave a booted enclave silently stuck at "issuing" — it either gets a
+  // certificate or says loudly, every attempt, why it hasn't yet.
+  let material = null;
+  for (let attempt = 1; material === null; attempt += 1) {
+    try {
+      material = await withDeadline(
+        issueCertificate({ ...config, tokens }),
+        ISSUE_ATTEMPT_TIMEOUT_MS,
+        "certificate issuance",
+      );
+    } catch (error) {
+      const delay = Math.min(RETRY_CAP_MS, RETRY_BASE_MS * 2 ** (attempt - 1));
+      console.error(
+        `tls: issuance attempt ${attempt} failed — ${error.message}; retrying in ${Math.round(delay / 1000)}s`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
   }
 
   const server = createHttpsServer({ key: material.key, cert: material.cert }, handler);
