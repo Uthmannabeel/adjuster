@@ -6,7 +6,7 @@
    no warnings. If the TEE quote is expired or a wallet is below floor, fix first.
 2. `node scripts/register-oidc-keys.mjs --check` — nothing to do.
 3. Pool must cover one payout (~25 C2FLR) with margin; deployer above 10.
-4. Open tabs in order: ① `/` ② `/claim` ③ `/desk` ④ `https://enclave.agentarc.online/health`
+4. Open tabs in order: ① `/` ② `/claim` ③ `/desk` ④ `https://tee.agentarc.online/health`
    ⑤ Coston2 explorer on the ClaimPayout address. Close everything else. Hide bookmarks bar.
 5. 1080p or higher; system notifications off. Record with OBS or Clipchamp screen capture.
 6. Talk over the recording as you go — one take is fine; judges prefer real over polished.

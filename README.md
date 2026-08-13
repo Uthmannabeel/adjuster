@@ -50,7 +50,7 @@ Four Flare protocols, each load-bearing — remove any one and the product stops
 | `FlareVtpmAttestation` | [`0xdf7fb88FcE2a9457a1a174845d702bF91aC8E19A`](https://coston2-explorer.flare.network/address/0xdf7fb88FcE2a9457a1a174845d702bF91aC8E19A) |
 | `OidcSignatureVerification` | [`0xf9b394C4583eD23A1b97f93428ea9A3e70Ad5A74`](https://coston2-explorer.flare.network/address/0xf9b394C4583eD23A1b97f93428ea9A3e70Ad5A74) |
 
-**The enclave runs in real Google Confidential Space** — a c3-standard-4 Intel TDX VM at [`enclave.agentarc.online`](https://enclave.agentarc.online/health), TLS terminated *inside* the enclave by a Let's Encrypt certificate whose key never exists outside TEE memory. Its in-enclave signing key registered its own vTPM quote on-chain: [`verifyAndAttest`, 12 Aug 2026](https://coston2-explorer.flare.network/tx/0x36c4a969021dac90220cfac1a1a7390d014019acb4727bd8ee32be39b2b98919) — the on-chain quote's image digest matches the running container image, and the quote renews itself hourly.
+**The enclave runs in real Google Confidential Space** — a c3-standard-4 Intel TDX VM at [`tee.agentarc.online`](https://tee.agentarc.online/health), TLS terminated *inside* the enclave by a Let's Encrypt certificate whose key never exists outside TEE memory. Its in-enclave signing key registered its own vTPM quote on-chain: [`verifyAndAttest`, 12 Aug 2026](https://coston2-explorer.flare.network/tx/0x36c4a969021dac90220cfac1a1a7390d014019acb4727bd8ee32be39b2b98919) — the on-chain quote's image digest matches the running container image, and the quote renews itself hourly.
 
 Four claims have run the full lifecycle and paid out on-chain — the latest entirely through the attested enclave:
 

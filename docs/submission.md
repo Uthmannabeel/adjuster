@@ -40,7 +40,7 @@ and the claims friction are real.
   - `/` — the pitch, a real settled claim as the specimen file
   - `/claim` — the claimant flow: photo → enclave verdict → on-chain evidence → FDC weather → payout
   - `/desk` — the insurer's live view of the chain (policies, attestation state, pool)
-- Live enclave (real Confidential Space, Intel TDX): **https://enclave.agentarc.online/health**
+- Live enclave (real Confidential Space, Intel TDX): **https://tee.agentarc.online/health**
 - Demo video: **[LINK — record and paste]**
 
 No wallet or login needed — the demo relays transactions so a judge can run a full
