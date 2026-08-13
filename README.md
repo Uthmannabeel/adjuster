@@ -127,9 +127,20 @@ Stated because a demo that overclaims is worth less than one that doesn't. Each 
 
 Four of the limitations this section used to list are now closed, live: **parser isolation** — image decoding (the classic RCE surface) runs in a disposable child process holding no secrets, so a decoder exploit lands in a process that cannot sign; **retry-masking fix** — a claimant's own earlier upload can no longer hide a cross-policy match (the registry searches past the claimant's records; regression-tested); **keyed lookups** — the hash-lookup endpoint requires a key, closing public membership tests; **per-IP rate limiting** on the evidence endpoints; and the **pre-upload attestation gate** described above.
 
+## C2PA soft-binding resolver
+
+C2PA ([ISO/IEC 22144](https://c2pa.org/)) separates *hard bindings* (exact hashes) from *soft bindings* (fingerprints that survive re-encoding) — exactly the two mechanisms this registry has used all along — and specifies a [Soft Binding Resolution API](https://spec.c2pa.org/specifications/specifications/2.2/softbinding/Decoupled.html) for resolving a fingerprint to the content it identifies. Every such resolver today is a centralized service; this registry now answers the spec's query shape backed by TEE-verified evidence:
+
+```
+GET /api/c2pa/services/supportedAlgorithms          → {"fingerprints":[{"alg":"org.proofofreal.dhash"}]}
+GET /api/c2pa/matches/byBinding?alg=…&value=<b64>   → {"matches":[{"manifestId":…,"similarityScore":0-100}]}
+```
+
+`byBinding` requires the same bearer key as `/api/lookup` (an open resolver would be a membership oracle), accepts the spec's GET and POST variants, and refuses degenerate fingerprints rather than matching noise. Honest scope: the algorithm identifier is self-assigned (dHash is not yet on C2PA's authoritative list) and matches resolve to registry record ids, not C2PA manifest stores — wrapping records in real manifests is the roadmap step.
+
 ## Roadmap
 
-Registration as a genuine FCC extension on Coston2 · a C2PA-conformant Soft Binding Resolution API endpoint ([ISO/IEC 22144](https://c2pa.org/) defines exactly the hard and soft bindings used here) · FXRP payouts · multi-node verifier agreement.
+Registration as a genuine FCC extension on Coston2 · full C2PA manifest repository semantics behind the soft-binding resolver (real manifest stores, registered algorithm identifier) · FXRP payouts · multi-node verifier agreement.
 
 ## License
 

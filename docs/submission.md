@@ -98,6 +98,15 @@ membership probing, and a pre-upload gate that verifies the enclave's on-chain
 vTPM quote *before* the browser sends a photograph. Dated, commit-linked record:
 `docs/work-ledger.md` — every claim in it is clickable.
 
+The registry also answers the **C2PA Soft Binding Resolution API** query shape
+(ISO/IEC 22144 — its spec defines exactly our two mechanisms, exact hashes as
+hard bindings and perceptual fingerprints as soft bindings). Soft-binding
+resolvers today are centralized services; this one is backed by a decentralized
+registry with TEE-verified evidence: `GET /api/c2pa/matches/byBinding` resolves
+a base64 fingerprint to matching records with a spec-scale similarity score
+(honest scope in the README: self-assigned algorithm id, record ids rather than
+manifest stores).
+
 ## Contract addresses and deployment details (Coston2)
 
 | What | Address / link |
