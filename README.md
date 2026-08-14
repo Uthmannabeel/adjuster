@@ -1,12 +1,36 @@
 # Adjuster
 
-**The confidential evidence layer for insurance claims.** A claimant photographs storm damage. The photo is verified *inside a hardware enclave* — never seen by the insurer, never stored by us — and the enclave's signed verdict settles a parametric policy on Flare. Rainfall is attested by the Flare Data Connector, the payout is converted at the FTSOv2 FLR/USD price, and the money moves in about four minutes.
+**The confidential evidence layer for parametric insurance.** A claimant photographs storm damage. The photo is verified *inside a hardware enclave* — never seen by the insurer, never stored anywhere — and the enclave's signed verdict settles a policy on Flare: rainfall attested by the Flare Data Connector, payout converted at the FTSOv2 price, money moved in about four minutes.
 
-Built for the **Flare Summer Signal** hackathon — *Confidential Compute Apps* bounty. Live on **Coston2**.
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-119%20passing-brightgreen.svg)](#getting-started)
+[![Network](https://img.shields.io/badge/network-Flare%20Coston2-e62058.svg)](https://coston2-explorer.flare.network/address/0x8af8843C9F2474F0528970161bc4C1db62e3B8b9)
+[![TEE](https://img.shields.io/badge/TEE-Google%20Confidential%20Space%20%C2%B7%20Intel%20TDX-4285F4.svg)](https://tee.agentarc.online/health)
 
 > A manual damage claim costs the insurer **$300–900** and takes the claimant **10–30 days**. Adjuster settled one on-chain for **under $0.01 in gas, in ~4 minutes** — without any human ever seeing the photograph.
 
+**Live demo:** [adjuster.agentarc.online](https://adjuster.agentarc.online) · **Live enclave:** [tee.agentarc.online/health](https://tee.agentarc.online/health) · **Work ledger:** [docs/work-ledger.md](docs/work-ledger.md)
+
+Built for the **Flare Summer Signal** hackathon — *Confidential Compute Apps* bounty.
+
+![Adjuster landing page — a real settled claim as the specimen file](docs/screenshots/landing.png)
+
 ---
+
+## Contents
+
+- [Why this exists](#why-this-exists)
+- [How it works](#how-it-works)
+- [What the enclave checks](#what-the-enclave-checks)
+- [How Flare carries the weight](#how-flare-carries-the-weight)
+- [Live on Coston2](#live-on-coston2)
+- [C2PA soft-binding resolver](#c2pa-soft-binding-resolver)
+- [Getting started](#getting-started)
+- [Security hardening](#security-hardening)
+- [Honest limitations](#honest-limitations)
+- [Project provenance](#project-provenance)
+- [Roadmap](#roadmap)
+- [License](#license)
 
 ## Why this exists
 
@@ -16,7 +40,27 @@ Adding evidence normally means surrendering privacy. Photographs of a flooded ho
 
 Adjuster removes that trade. Evidence is examined in a Trusted Execution Environment, and only a *verdict* — signed by a key that exists nowhere but inside the enclave, and provably so on-chain — ever leaves it.
 
-## What the enclave actually checks
+## How it works
+
+```
+Browser ──photo──▶ ENCLAVE (Confidential Space)          ← the photo goes here and stops here
+                     │  EXIF · SHA-256 · dHash
+                     │  reads policy terms from the contract
+                     ├──hash only──▶ registry  (/api/lookup, /api/claims)
+                     │
+                     └──signed FCC ActionResult──▶ browser
+                                                     │
+                              ClaimPayout.submitEvidence  ← ecrecover + vTPM quote check
+                                                     │
+                              ClaimPayout.settle ──▶ FDC Web2Json proof (rainfall)
+                                                     └▶ FTSOv2 FLR/USD ──▶ payout
+```
+
+Surfaces: [`/`](https://adjuster.agentarc.online) the pitch and a real settled claim · [`/claim`](https://adjuster.agentarc.online/claim) the claimant flow · [`/desk`](https://adjuster.agentarc.online/desk) the insurer's live view of the chain · [`/registry`](https://adjuster.agentarc.online/registry) the original media-provenance registry this was built on.
+
+![The claimant flow — policies read live from the contract, evidence docket fills as each step completes](docs/screenshots/claim.png)
+
+## What the enclave checks
 
 The claimant's browser uploads the photograph **directly to the enclave**. It never touches this application's servers.
 
@@ -50,41 +94,35 @@ Four Flare protocols, each load-bearing — remove any one and the product stops
 | `FlareVtpmAttestation` | [`0xdf7fb88FcE2a9457a1a174845d702bF91aC8E19A`](https://coston2-explorer.flare.network/address/0xdf7fb88FcE2a9457a1a174845d702bF91aC8E19A) |
 | `OidcSignatureVerification` | [`0xf9b394C4583eD23A1b97f93428ea9A3e70Ad5A74`](https://coston2-explorer.flare.network/address/0xf9b394C4583eD23A1b97f93428ea9A3e70Ad5A74) |
 
-**The enclave runs in real Google Confidential Space** — a c3-standard-4 Intel TDX VM at [`tee.agentarc.online`](https://tee.agentarc.online/health), TLS terminated *inside* the enclave by a Let's Encrypt certificate whose key never exists outside TEE memory. Its in-enclave signing key registered its own vTPM quote on-chain: [`verifyAndAttest`, 12 Aug 2026](https://coston2-explorer.flare.network/tx/0x36c4a969021dac90220cfac1a1a7390d014019acb4727bd8ee32be39b2b98919) — the on-chain quote's image digest matches the running container image, and the quote renews itself hourly.
+**The enclave runs in real Google Confidential Space** — a c3-standard-4 Intel TDX VM at [`tee.agentarc.online`](https://tee.agentarc.online/health), TLS terminated *inside* the enclave by a Let's Encrypt certificate whose key never exists outside TEE memory. Its in-enclave signing key registered its own vTPM quote on-chain ([`verifyAndAttest`](https://coston2-explorer.flare.network/tx/0xdc81f580643a4e63f59ccceab0200e2dd0c92d8f255e683b9e181bcae6c8aa49)) — the on-chain quote's image digest matches the running container image, and the quote renews itself hourly.
 
 Four claims have run the full lifecycle and paid out on-chain — the latest entirely through the attested enclave:
 
 - **Policy #14** — the first **fully-attested** claim: photo verified inside real Confidential Space (`attested=true`), evidence signed by the attested in-enclave key, FDC round 1423784 attested 10.4mm → [24.92 C2FLR paid, `evidenceAttested=true`](https://coston2-explorer.flare.network/tx/0x6b6f0a6403f1e57642bf744105ea24c43d624ecef0a8732c3b10cb19058557a6)
-
 - **Policy #3** — evidence accepted → FDC round 1401182 attested 11.7mm → [23.29 C2FLR paid](https://coston2-explorer.flare.network/tx/0x6883b850c70ca8637cf71ed208c388735d07fe48216129b6e0878cc78db9e914)
 - **Policy #5** — re-verified end-to-end through the serverless API routes → FDC round 1403092 → [22.45 C2FLR paid](https://coston2-explorer.flare.network/tx/0xbb40b3b67f3fb4b03989798d1786c9b4df0818118c5769cca3b7e8c4901762ce)
 - **Policy #11** — 6 August 2026, photo to payout in one run → FDC round 1417483 attested 10.4mm at 4.8253, 7.0552 on 22 July → [25.17 C2FLR paid](https://coston2-explorer.flare.network/tx/0xdeb5e8e83353605a0d4b899c882aa9d8c5571b3c0e0996c151d48b7c3d05b7ee)
 
 And spoofing is rejected, not merely discouraged: submitting a tampered payload, or signing with a wallet that has no attested quote, both revert with `NotAttestedTee` on-chain.
 
-## Architecture
+![The claims desk — the contract itself records which verdicts came from an attested TEE and which from the flagged dev signer](docs/screenshots/desk.png)
+
+## C2PA soft-binding resolver
+
+C2PA ([ISO/IEC 22144](https://c2pa.org/)) separates *hard bindings* (exact hashes) from *soft bindings* (fingerprints that survive re-encoding) — exactly the two mechanisms this registry has used all along — and specifies a [Soft Binding Resolution API](https://spec.c2pa.org/specifications/specifications/2.2/softbinding/Decoupled.html) for resolving a fingerprint to the content it identifies. Every such resolver today is a centralized service; this registry now answers the spec's query shape backed by TEE-verified evidence:
 
 ```
-Browser ──photo──▶ ENCLAVE (Confidential Space)          ← the photo goes here and stops here
-                     │  EXIF · SHA-256 · dHash
-                     │  reads policy terms from the contract
-                     ├──hash only──▶ registry  (/api/lookup, /api/claims)
-                     │
-                     └──signed FCC ActionResult──▶ browser
-                                                     │
-                              ClaimPayout.submitEvidence  ← ecrecover + vTPM quote check
-                                                     │
-                              ClaimPayout.settle ──▶ FDC Web2Json proof (rainfall)
-                                                     └▶ FTSOv2 FLR/USD ──▶ payout
+GET /api/c2pa/services/supportedAlgorithms          → {"fingerprints":[{"alg":"org.proofofreal.dhash"}]}
+GET /api/c2pa/matches/byBinding?alg=…&value=<b64>   → {"matches":[{"manifestId":…,"similarityScore":0-100}]}
 ```
 
-Surfaces: `/` the pitch and a real settled claim · `/claim` the claimant flow · `/desk` the insurer's live view of the chain · `/registry` the original media-provenance registry this was built on.
+`byBinding` requires the same bearer key as `/api/lookup` (an open resolver would be a membership oracle), accepts the spec's GET and POST variants, and refuses degenerate fingerprints rather than matching noise. Honest scope: the algorithm identifier is self-assigned (dHash is not yet on C2PA's authoritative list) and matches resolve to registry record ids, not C2PA manifest stores — wrapping records in real manifests is the roadmap step.
 
-## Run it
+## Getting started
 
 ```bash
 npm install
-npm test                 # 106 unit tests
+npm test                 # 119 unit tests
 npm run dev              # the app
 
 cd enclave && npm install && node server.mjs    # the verifier, dev mode (attested=false)
@@ -97,17 +135,17 @@ node scripts/health-check.mjs
 node scripts/register-oidc-keys.mjs --check
 ```
 
-On this machine Node needs `NODE_OPTIONS=--use-system-ca` to reach the Coston2 RPC through the local TLS interception.
+Deploying the real enclave (fresh GCP project → attested TDX VM, one command, ten idempotent stages) is documented in [docs/enclave.md](docs/enclave.md); `node scripts/deploy-enclave.mjs --list` shows the pipeline.
 
-## What was built before this hackathon, and what was built during it
+## Security hardening
 
-This project began as **Proof of Real**, a media-provenance registry built for a previous hackathon. That origin is stated plainly here because Summer Signal judges on evidence of new work during the program.
+Shipped during the program, each found by auditing our own limitations:
 
-**Pre-existing (before 14 July 2026):** the Next.js registry, SHA-256 + dHash fingerprinting, the Ed25519-sealed hash-chained ledger, and LSH near-match. That prior work lives on at `/registry`.
-
-**Built during the program:** everything Flare, everything confidential, and the entire insurance product — the anchor contract, `ClaimPayout.sol`, the vTPM attestation gating, the FDC Web2Json settlement path, FTSOv2 conversion, the enclave, the claim-intake forensics, the cross-claim fraud detection, the Supabase backend, and all three Adjuster surfaces.
-
-[`docs/work-ledger.md`](docs/work-ledger.md) is the dated, commit-linked record of every substantial change.
+- **Parser isolation** — image decoding (the classic RCE surface) runs in a disposable child process holding no secrets, so a decoder exploit lands in a process that cannot sign.
+- **Retry-masking fix** — a claimant's own earlier upload can no longer hide a cross-policy match (the registry searches past the claimant's records; regression-tested).
+- **Keyed lookups** — the hash-lookup endpoint requires a key, closing public membership tests.
+- **Per-IP rate limiting** on the evidence endpoints.
+- **Pre-upload attestation gate** — the claim page verifies the enclave's live on-chain vTPM quote and container digest *before* enabling upload; a swapped-in non-TEE server fails the check with no photo sent.
 
 ## Honest limitations
 
@@ -123,20 +161,15 @@ Stated because a demo that overclaims is worth less than one that doesn't. Each 
 
 **Operations.** Attestation quotes expire hourly and cost ~30 C2FLR/day to renew — if the in-enclave wallet runs dry the quote lapses and evidence reverts until refunded (fail-closed, visible on `/desk`). Every boot generates a fresh in-enclave key that must earn attestation again. Testnet only; the demo relays transactions from a server wallet so judges need no wallet — custody shortcut, not design. No KYC or sanctions screening, which real insurance money requires. The contracts are covered by live end-to-end scripts against Coston2, not unit tests.
 
-## Hardening shipped during the program
+## Project provenance
 
-Four of the limitations this section used to list are now closed, live: **parser isolation** — image decoding (the classic RCE surface) runs in a disposable child process holding no secrets, so a decoder exploit lands in a process that cannot sign; **retry-masking fix** — a claimant's own earlier upload can no longer hide a cross-policy match (the registry searches past the claimant's records; regression-tested); **keyed lookups** — the hash-lookup endpoint requires a key, closing public membership tests; **per-IP rate limiting** on the evidence endpoints; and the **pre-upload attestation gate** described above.
+This project began as **Proof of Real**, a media-provenance registry built for a previous hackathon. That origin is stated plainly here because Summer Signal judges on evidence of new work during the program.
 
-## C2PA soft-binding resolver
+**Pre-existing (before 14 July 2026):** the Next.js registry, SHA-256 + dHash fingerprinting, the Ed25519-sealed hash-chained ledger, and LSH near-match. That prior work lives on at `/registry`.
 
-C2PA ([ISO/IEC 22144](https://c2pa.org/)) separates *hard bindings* (exact hashes) from *soft bindings* (fingerprints that survive re-encoding) — exactly the two mechanisms this registry has used all along — and specifies a [Soft Binding Resolution API](https://spec.c2pa.org/specifications/specifications/2.2/softbinding/Decoupled.html) for resolving a fingerprint to the content it identifies. Every such resolver today is a centralized service; this registry now answers the spec's query shape backed by TEE-verified evidence:
+**Built during the program:** everything Flare, everything confidential, and the entire insurance product — the anchor contract, `ClaimPayout.sol`, the vTPM attestation gating, the FDC Web2Json settlement path, FTSOv2 conversion, the enclave, the claim-intake forensics, the cross-claim fraud detection, the Supabase backend, the C2PA resolver, and all three Adjuster surfaces.
 
-```
-GET /api/c2pa/services/supportedAlgorithms          → {"fingerprints":[{"alg":"org.proofofreal.dhash"}]}
-GET /api/c2pa/matches/byBinding?alg=…&value=<b64>   → {"matches":[{"manifestId":…,"similarityScore":0-100}]}
-```
-
-`byBinding` requires the same bearer key as `/api/lookup` (an open resolver would be a membership oracle), accepts the spec's GET and POST variants, and refuses degenerate fingerprints rather than matching noise. Honest scope: the algorithm identifier is self-assigned (dHash is not yet on C2PA's authoritative list) and matches resolve to registry record ids, not C2PA manifest stores — wrapping records in real manifests is the roadmap step.
+[`docs/work-ledger.md`](docs/work-ledger.md) is the dated, commit-linked record of every substantial change.
 
 ## Roadmap
 
@@ -144,4 +177,4 @@ Registration as a genuine FCC extension on Coston2 · full C2PA manifest reposit
 
 ## License
 
-MIT
+[MIT](LICENSE) © 2026 Nabeel Uthman
