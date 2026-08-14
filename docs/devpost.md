@@ -35,5 +35,5 @@ Video and audio fingerprinting, LSH banding for perceptual matching at scale, an
 ## Links
 
 - Live app: <!-- TODO: Vercel URL -->
-- Repository: https://github.com/Uthmannabeel/proof-of-real-h0
+- Repository: https://github.com/Uthmannabeel/adjuster
 - Demo video: <!-- TODO -->

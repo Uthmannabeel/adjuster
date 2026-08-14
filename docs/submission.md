@@ -49,7 +49,7 @@ per-policy with correct EXIF.
 
 ## GitHub repo
 
-https://github.com/Uthmannabeel/proof-of-real-h0 (public, MIT)
+https://github.com/Uthmannabeel/adjuster (public, MIT)
 
 ## How the project uses Flare
 
