@@ -82,8 +82,16 @@ const REFRESH_MARGIN_MS = 5 * 60 * 1000;
 const MAX_REFRESH_MS = 30 * 60 * 1000;
 const MIN_REFRESH_MS = 30 * 1000;
 const MAX_BACKOFF_MS = 5 * 60 * 1000;
-/** Below this the wallet cannot pay for verifyAndAttest (RSA verification is gas-heavy). */
-export const MIN_GAS_BALANCE_WEI = 10n ** 17n; // 0.1 C2FLR
+/** Cap tx.wait so an unmined verifyAndAttest can't wedge the loop forever. */
+const TX_WAIT_TIMEOUT_MS = 120 * 1000;
+/**
+ * Below this the wallet cannot pay for verifyAndAttest. One attestation is
+ * ~1.92M gas; at Coston2's ~650 gwei base fee that is ~1.25 C2FLR, and ethers
+ * reserves gasLimit × maxFeePerGas (≈2.3× base). 0.1 C2FLR was 12× too low —
+ * the pre-check never fired, so the loop discovered dryness only by a failed
+ * send. Sized to cover one reserved tx with margin.
+ */
+export const MIN_GAS_BALANCE_WEI = 3n * 10n ** 18n; // 3 C2FLR
 
 /** Split a JWT into the raw byte arrays the contract verifies over. */
 export function splitJwt(token) {
@@ -182,7 +190,15 @@ export async function attestOnce({ wallet, vtpmAddress, token, state }) {
   await waitForChainTime(wallet.provider, jwtClaims(token).iat);
 
   const tx = await vtpm.verifyAndAttest(header, payload, signature);
-  await tx.wait();
+  // tx.wait() with NO timeout waits forever (ethers v6). If this tx is accepted
+  // by the RPC but never mined — a gas-price spike leaving it underpriced, a
+  // dropped mempool entry, a nonce gap — the whole attestation loop wedges
+  // silently: no catch fires, no retry is scheduled, the quote expires ~1 h
+  // later, and ClaimPayout starts rejecting settlements. Bound the wait and
+  // treat a timeout as a normal failure so the loop's backoff retries (a fresh
+  // attempt re-sends at the current gas price, clearing an underpriced tx).
+  const receipt = await tx.wait(1, TX_WAIT_TIMEOUT_MS);
+  if (!receipt) throw new Error("Attestation tx not mined within timeout — will retry.");
 
   // Trust the chain, not the receipt: read the quote back.
   const quote = await vtpm.getRegisteredQuote(wallet.address);

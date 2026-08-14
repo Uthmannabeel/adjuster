@@ -56,8 +56,13 @@ const ACCEPTED_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/
 
 // Per-IP token bucket on the evidence endpoints: a claim needs seconds of
 // human effort, so sustained machine-rate traffic is abuse, not claims.
-const RATE_CAPACITY = 10;
-const RATE_REFILL_PER_MIN = 6;
+// Sized for a real judge, not a machine: a fumbling human doing /verify +
+// /claim per photo, plus a couple of failed attempts (wrong type, oversize)
+// that each cost a token before validation, must not hit the wall mid-demo —
+// and several judges behind one corporate NAT share this bucket. 30 burst /
+// 20-per-min refill still throttles genuine abuse within a second or two.
+const RATE_CAPACITY = 30;
+const RATE_REFILL_PER_MIN = 20;
 const rateBuckets = new Map();
 function rateLimited(req) {
   const ip =
@@ -310,7 +315,13 @@ async function handleClaim(req, res, url) {
       body: JSON.stringify({ policyId: Number(policyId), sha, phash }),
     });
     recorded = (await rec.json()).success === true;
-  } catch {
+    if (!recorded) {
+      // A silent failure here quietly degrades cross-claim fraud detection for
+      // the whole judging window with no way to notice — log it loudly.
+      console.error(`claim: registry declined to record fingerprint for policy ${policyId}`);
+    }
+  } catch (err) {
+    console.error(`claim: failed to record fingerprint for policy ${policyId} — ${err?.message ?? err}`);
     recorded = false;
   }
 
@@ -406,7 +417,18 @@ async function handle(req, res, { encrypted }) {
 
 const server = createServer((req, res) => handle(req, res, { encrypted: false }));
 
-server.listen(PORT, async () => {
+// The listen callback is async, so any rejection inside it (notably startTls's
+// HTTPS server.listen on :443 rejecting with EADDRINUSE when a prior container
+// hasn't released the port) would become an unhandled rejection and exit the
+// process — a crash-loop that also burns a Let's Encrypt issuance each boot.
+// Wrap it so a TLS bring-up failure degrades to plain HTTP instead of crashing.
+server.listen(PORT, () => {
+  void bootTls().catch((err) => {
+    console.error(`tls: bring-up failed, continuing on plain HTTP — ${err?.message ?? err}`);
+  });
+});
+
+async function bootTls() {
   console.log(`proof-of-real enclave listening on :${PORT}`);
   console.log(`registry: ${REGISTRY_URL}`);
   console.log(
@@ -429,4 +451,4 @@ server.listen(PORT, async () => {
     console.error(`tls: NOT active — ${result.reason}`);
     console.error("tls: continuing on plain HTTP; browsers on an HTTPS page will refuse to reach us");
   }
-});
+}
