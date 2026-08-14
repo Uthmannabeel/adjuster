@@ -122,8 +122,8 @@ on-chain; the on-chain quote's digest matches the running container.
 
 ## Roadmap / next steps
 
-Registration as a genuine FCC extension on Coston2 → C2PA-conformant Soft Binding
-Resolution API (ISO/IEC 22144 defines exactly the hard/soft bindings used here) →
-FXRP payouts → multi-node verifier agreement. Honest limitations are stated in the
-README rather than hidden: testnet only, hourly attestation gas, dHash's known
-blind spots (crop/rotation), single enclave.
+Registration as a genuine FCC extension on Coston2 → full C2PA manifest repository
+semantics behind the already-live soft-binding resolver (real manifest stores,
+registered algorithm identifier) → FXRP payouts → multi-node verifier agreement.
+Honest limitations are stated in the README rather than hidden: testnet only,
+hourly attestation gas, dHash's known blind spots (crop/rotation), single enclave.
