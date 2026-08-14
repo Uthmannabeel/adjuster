@@ -78,9 +78,3 @@ Point at the green **attested TEE** rows, the pool, the settled policies.
 
 **After recording:** upload (YouTube unlisted is fine) → paste the link into
 `docs/submission.md` (Demo section) and the README → commit → submit the BUIDL.
-
-**Gate:** the live `/claim` flow on production needs `adjuster.agentarc.online`
-DNS to exist (the enclave reads the registry through that name). Until then,
-record the claim segment against the local stack (registry :3001, app pointing at
-it) and say nothing false — or wait for DNS. Do not record segment 3 with
-`attested=false` in frame.
