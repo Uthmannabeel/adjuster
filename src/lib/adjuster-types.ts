@@ -93,6 +93,10 @@ export interface SettlementTicket {
 export type SettlementPoll =
   | { state: "waiting-finalization" }
   | { state: "waiting-proof" }
+  // A permanent, non-retryable outcome (pool empty, already settled, evidence
+  // missing) — the browser must stop polling and show `reason`, never keep
+  // spinning as if the round were still finalizing.
+  | { state: "failed"; reason: string }
   | {
       state: "settled";
       precipitationMmE2: number;

@@ -15,9 +15,13 @@ import { Contract, JsonRpcProvider, formatEther } from "ethers";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-// Below these, a demo can fail mid-click in front of a judge.
-const MIN_DEPLOYER_C2FLR = 10;
-const MIN_POOL_C2FLR = 30;
+// Below these, a demo can fail mid-click in front of a judge. Sized against
+// the ACTUAL cost of one action at current FTSO FLR/USD (~$0.006): a single
+// $0.15 payout is ~25 C2FLR, so a 30-floor pool passes while being one click
+// from an InsufficientPool revert. The pool floor covers ~2 payouts + margin;
+// the deployer floor covers a day of hourly enclave re-attestation (~30/day).
+const MIN_DEPLOYER_C2FLR = 40;
+const MIN_POOL_C2FLR = 60;
 const RPC_TIMEOUT_MS = 15_000;
 
 const CLAIMS_ABI = [

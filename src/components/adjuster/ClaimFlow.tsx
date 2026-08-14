@@ -17,7 +17,13 @@ import { EvidenceChain, type Station, type StationLine } from "./EvidenceChain";
 const ENCLAVE_URL = (process.env.NEXT_PUBLIC_ENCLAVE_URL ?? "").replace(/\/$/, "");
 
 const POLL_INTERVAL_MS = 8_000;
-const POLL_LIMIT = 60; // ≈ 8 minutes — FDC rounds are ~90 s, this is generous
+// ≈ 5 minutes. A normal settle is finalization (~90 s) + proof (1–2 rounds) +
+// settle tx ≈ 3–4 min, so this keeps wide margin — but when the FDC providers
+// genuinely miss the submission round (the proof then never lands for that
+// request), this is how long the judge waits before the "retry settlement"
+// button appears, and retry resubmits a fresh request that almost always lands.
+// 8 minutes was needlessly long for that recovery.
+const POLL_LIMIT = 38;
 
 type Phase =
   | "idle"
@@ -69,13 +75,18 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const POLICY_LOAD_ATTEMPTS = 3;
 const POLICY_RETRY_BACKOFF_MS = 900;
 
-/** Strips ethers' internal suffix — "(code=TIMEOUT, version=6.17.0)" helps nobody reading a claim form. */
+/**
+ * Turns a raw error into one line a judge can read. Strips ethers' internal
+ * suffix — "(code=TIMEOUT, version=6.17.0)" — and, crucially, replaces the
+ * hundreds-of-characters serialized-transaction walls that ethers v6 attaches
+ * to CALL_EXCEPTION/INSUFFICIENT_FUNDS with a neutral fallback.
+ */
 function readableError(err: unknown): string {
   const raw = err instanceof Error ? err.message : "";
   const cleaned = raw.replace(/\s*\((?:code|version|argument|value)=.*\)\s*$/i, "").trim();
   return cleaned.length > 0 && cleaned.length < 160
     ? cleaned
-    : "The Coston2 node did not answer in time.";
+    : "Something went wrong talking to Coston2 — please retry.";
 }
 
 export function ClaimFlow() {
@@ -105,34 +116,46 @@ export function ClaimFlow() {
     expiresAt: string | null;
   } | null>(null);
 
+  // The attestation quote lives ~1 h, so a status read at mount goes stale if a
+  // judge lingers. `fetchAttStatus` is reused for the live re-check inside
+  // fileClaim (right before the photo is sent) so a legitimate claim can never
+  // be turned into a "spoof blocked" verdict by a stale tab.
+  type AttStatus = {
+    checked: boolean;
+    attested: boolean;
+    reason: string;
+    expiresAt: string | null;
+  };
+  const fetchAttStatus = useCallback(async (): Promise<AttStatus> => {
+    try {
+      const j = await (await fetch("/api/adjuster/enclave-status")).json();
+      if (j?.success) return j.data as AttStatus;
+      return { checked: false, attested: false, reason: "Status check unavailable.", expiresAt: null };
+    } catch {
+      return { checked: false, attested: false, reason: "Status check unavailable.", expiresAt: null };
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/adjuster/enclave-status")
-      .then((r) => r.json())
-      .then((j) => {
-        if (!cancelled && j?.success) setAttStatus(j.data);
-      })
-      .catch(() => {
-        if (!cancelled)
-          setAttStatus({
-            checked: false,
-            attested: false,
-            reason: "Status check unavailable.",
-            expiresAt: null,
-          });
-      });
+    void fetchAttStatus().then((s) => {
+      if (!cancelled) setAttStatus(s);
+    });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [fetchAttStatus]);
 
   // Cancels in-flight settle loops when the component unmounts or a new
   // claim starts (each run gets its own id).
   const runIdRef = useRef(0);
   useEffect(() => () => void (runIdRef.current += 1), []);
 
-  const loadPolicies = useCallback(async () => {
-    setLoadError(null);
+  // `silent` refreshes (after a settle or a buy) must never surface loadError:
+  // loadError replaces the whole component, so a flaky background refresh would
+  // otherwise wipe the "Paid" claim file the judge is looking at.
+  const loadPolicies = useCallback(async (silent = false) => {
+    if (!silent) setLoadError(null);
     for (let attempt = 0; attempt < POLICY_LOAD_ATTEMPTS; attempt += 1) {
       try {
         const res = await fetch("/api/adjuster/policies");
@@ -146,7 +169,7 @@ export function ClaimFlow() {
         // A slow node is not a shut claims office: only give up after retrying,
         // and then offer a way back rather than a dead end.
         if (attempt === POLICY_LOAD_ATTEMPTS - 1) {
-          setLoadError(readableError(err));
+          if (!silent) setLoadError(readableError(err));
           return [];
         }
         await sleep(POLICY_RETRY_BACKOFF_MS * (attempt + 1));
@@ -185,7 +208,7 @@ export function ClaimFlow() {
       const { body } = await postJson<BuyResult>("/api/adjuster/buy", {});
       if (!body.success || !body.data) throw new Error(body.error ?? "Policy purchase failed.");
       setBuyResult(body.data);
-      await loadPolicies();
+      await loadPolicies(true);
       setPolicyId(body.data.policyId);
     } catch (err: unknown) {
       setSetupError(err instanceof Error ? err.message : "Policy purchase failed.");
@@ -221,13 +244,56 @@ export function ClaimFlow() {
     setFlow({ ...INITIAL_FLOW, phase: "verifying" });
 
     try {
-      // 1 — confidential verification; the photo goes only to the enclave.
-      const enclaveRes = await fetch(
-        `${ENCLAVE_URL}/claim?policyId=${policyId}&contract=${contract}`,
-        { method: "POST", headers: { "Content-Type": file.type }, body: file },
-      );
-      const enclaveBody = (await enclaveRes.json()) as ApiResponse<EnclaveClaimData>;
+      // 0 — re-verify the enclave's on-chain attestation NOW, not at page load.
+      // The quote lives ~1 h; a stale tab could otherwise send a photo to an
+      // enclave whose quote has lapsed and get it stamped "spoof blocked".
+      const att = await fetchAttStatus();
       if (!live()) return;
+      setAttStatus(att);
+      if (att.checked && !att.attested) {
+        setFlow((f) => ({
+          ...f,
+          phase: "error",
+          error: `The confidential enclave is not currently attested on-chain — ${att.reason} No photo was sent. This is usually momentary; try again shortly.`,
+        }));
+        return;
+      }
+
+      // 1 — confidential verification; the photo goes only to the enclave.
+      // Bounded so a stalled TLS handshake can't freeze the whole flow (every
+      // button is disabled while busy) with no way back but a reload.
+      const enclaveController = new AbortController();
+      const enclaveTimer = setTimeout(() => enclaveController.abort(), 60_000);
+      let enclaveRes: Response;
+      try {
+        enclaveRes = await fetch(
+          `${ENCLAVE_URL}/claim?policyId=${policyId}&contract=${contract}`,
+          { method: "POST", headers: { "Content-Type": file.type }, body: file, signal: enclaveController.signal },
+        );
+      } catch (netErr: unknown) {
+        if (!live()) return;
+        const aborted = netErr instanceof DOMException && netErr.name === "AbortError";
+        throw new Error(
+          aborted
+            ? "The enclave did not respond within 60 seconds — it may be under load. Try again."
+            : "Could not reach the confidential enclave. Check your connection and try again.",
+        );
+      } finally {
+        clearTimeout(enclaveTimer);
+      }
+      if (!live()) return;
+      // The enclave returns JSON even on its own errors, but a gateway 502/429
+      // in front of it returns HTML — guard so the judge never sees a raw
+      // "Unexpected token '<'" JSON-parse error.
+      const enclaveBody = (await enclaveRes.json().catch(() => null)) as ApiResponse<EnclaveClaimData> | null;
+      if (!live()) return;
+      if (!enclaveBody) {
+        throw new Error(
+          enclaveRes.status === 429
+            ? "The enclave is rate-limiting requests right now — wait a moment and try again."
+            : `The enclave returned an unexpected response (HTTP ${enclaveRes.status}). Try again.`,
+        );
+      }
       if (!enclaveBody.success || !enclaveBody.data) {
         throw new Error(enclaveBody.error ?? "The enclave could not verify the photo.");
       }
@@ -257,11 +323,7 @@ export function ClaimFlow() {
       await runSettlement(runId, policyId);
     } catch (err: unknown) {
       if (!live()) return;
-      setFlow((f) => ({
-        ...f,
-        phase: "error",
-        error: err instanceof Error ? err.message : "The claim could not be processed.",
-      }));
+      setFlow((f) => ({ ...f, phase: "error", error: readableError(err) }));
     }
   }
 
@@ -282,25 +344,41 @@ export function ClaimFlow() {
       if (!live()) return;
       setFlow((f) => ({ ...f, elapsedS: Math.round(((i + 1) * POLL_INTERVAL_MS) / 1000) }));
 
-      const poll = await postJson<SettlementPoll>("/api/adjuster/settle/poll", {
-        policyId: ticket.policyId,
-        roundId: ticket.roundId,
-        abiEncodedRequest: ticket.abiEncodedRequest,
-      });
+      // A thrown fetch here (venue Wi-Fi blip, a gateway 502 with an HTML body)
+      // is a transient hiccup, NOT a reason to abort a claim seconds before the
+      // payout — swallow it and poll again.
+      let poll: { status: number; body: ApiResponse<SettlementPoll> };
+      try {
+        poll = await postJson<SettlementPoll>("/api/adjuster/settle/poll", {
+          policyId: ticket.policyId,
+          roundId: ticket.roundId,
+          abiEncodedRequest: ticket.abiEncodedRequest,
+        });
+      } catch {
+        continue;
+      }
       if (!live()) return;
       if (!poll.body.success || !poll.body.data) {
         // Transient RPC/DA hiccups are normal mid-round — keep polling.
         continue;
       }
-      setFlow((f) => ({ ...f, poll: poll.body.data ?? null }));
-      if (poll.body.data.state === "settled") {
+      const data = poll.body.data;
+      // A permanent, non-retryable outcome (pool empty, evidence missing) — stop
+      // now with the real reason instead of spinning the full 8-minute budget
+      // and then blaming the weather oracle.
+      if (data.state === "failed") {
+        setFlow((f) => ({ ...f, phase: "error", error: data.reason }));
+        return;
+      }
+      setFlow((f) => ({ ...f, poll: data }));
+      if (data.state === "settled") {
         setFlow((f) => ({ ...f, phase: "settled" }));
-        void loadPolicies();
+        void loadPolicies(true);
         return;
       }
     }
     throw new Error(
-      "The attestation round is taking longer than expected. The request is on-chain — retry settlement to resume.",
+      "The Flare Data Connector providers appear to have skipped this attestation round — an occasional testnet hiccup. Retry settlement to submit a fresh request; it almost always lands the next round.",
     );
   }
 
@@ -313,11 +391,7 @@ export function ClaimFlow() {
       await runSettlement(runId, policyId);
     } catch (err: unknown) {
       if (runIdRef.current !== runId) return;
-      setFlow((f) => ({
-        ...f,
-        phase: "error",
-        error: err instanceof Error ? err.message : "Settlement failed.",
-      }));
+      setFlow((f) => ({ ...f, phase: "error", error: readableError(err) }));
     }
   }
 
@@ -573,9 +647,22 @@ export function ClaimFlow() {
           {flow.phase === "error" && flow.error && (
             <div className="mt-5 doc-rule border-b-0 border-t pt-3">
               <p className="mono text-[0.8rem] text-[var(--color-stamp-red)]">{flow.error}</p>
-              <button className="btn btn-ghost mt-3" onClick={settleOnly}>
-                Retry settlement
-              </button>
+              {/* "Retry settlement" only makes sense once evidence is approved
+                  on-chain — offered for a pre-evidence failure it just reverts
+                  EvidenceMissing after another 90s round. Otherwise re-file. */}
+              {flow.evidence || selected?.evidenceApproved ? (
+                <button className="btn btn-ghost mt-3" onClick={settleOnly} disabled={busy}>
+                  Retry settlement
+                </button>
+              ) : (
+                <button
+                  className="btn btn-ghost mt-3"
+                  onClick={fileClaim}
+                  disabled={busy || !file || policyId === null}
+                >
+                  Try the claim again
+                </button>
+              )}
             </div>
           )}
 
@@ -594,9 +681,11 @@ export function ClaimFlow() {
           <p className="mono text-[0.72rem] text-[var(--color-ink-faint)] mt-3">
             Full cycle: photo → confidential verification → on-chain evidence → attested weather →{" "}
             {flow.poll.triggered ? "payout" : "settlement"}, in about{" "}
-            {Math.max(1, Math.round(flow.elapsedS / 60))} minute
-            {Math.round(flow.elapsedS / 60) === 1 ? "" : "s"} of oracle time, for well under a cent
-            of gas. A manual claim runs $300–900 and 10–30 days.
+            {(() => {
+              const mins = Math.max(1, Math.round(flow.elapsedS / 60));
+              return `${mins} minute${mins === 1 ? "" : "s"}`;
+            })()}{" "}
+            of oracle time, for well under a cent of gas. A manual claim runs $300–900 and 10–30 days.
           </p>
         )}
       </section>

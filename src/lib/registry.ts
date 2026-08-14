@@ -1,7 +1,7 @@
 import { nanoid } from "nanoid";
 import type { MediaType, Registration } from "./types";
 import { getStore } from "./store";
-import { contentHash, imageDimensions, perceptualHash } from "./hash";
+import { contentHash, imageDimensions, isDegeneratePerceptualHash, perceptualHash } from "./hash";
 import {
   canonicalRecord,
   recordHash,
@@ -187,6 +187,14 @@ export async function verifyMedia(buf: Buffer): Promise<Verification> {
   }
 
   const phash = await perceptualHash(buf);
+  // A featureless image (blank wall, dark frame) collapses to a degenerate
+  // fingerprint that sits within near-match distance of every other featureless
+  // image — near-matching it would report a confident "likely-altered" against
+  // an unrelated record. Only an exact SHA-256 match is meaningful here; the
+  // enclave and the C2PA resolver already refuse such fingerprints.
+  if (isDegeneratePerceptualHash(phash)) {
+    return { status: "unregistered", registration: null, distance: null, confidence: 0 };
+  }
   const near = await store.findNearest(phash, NEAR_MATCH_MAX_DISTANCE);
   if (near) {
     return {

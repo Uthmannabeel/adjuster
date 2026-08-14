@@ -16,8 +16,13 @@ import { JsonRpcProvider, Wallet, formatEther, isAddress, parseEther } from "eth
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const envPath = join(root, ".env.local");
 
-/** Enough for many attestation transactions; each RSA verification is ~1M gas. */
-const DEFAULT_TARGET_C2FLR = "2";
+/**
+ * One hourly re-attestation costs ~1.25 C2FLR at Coston2's ~650 gwei base fee
+ * (1.92M gas), so a default target must carry a meaningful runway — 2 C2FLR
+ * bought only ~90 minutes and left the enclave to lapse mid-judging. 30 ≈ a
+ * full day; pass --target higher for a longer window.
+ */
+const DEFAULT_TARGET_C2FLR = "30";
 
 function envLocal(name) {
   const content = readFileSync(envPath, "utf8");

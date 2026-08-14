@@ -41,7 +41,56 @@ const CLAIMS_MIN_ABI = [
   + " string queryParams, string body, string postProcessJq, string abiSignature) requestBody,"
   + " (bytes abiEncodedData) responseBody) data) proof)",
   "event Settled(uint256 indexed policyId, uint256 precipitationMmE2, bool triggered, uint256 paidWei, bool evidenceAttested)",
+  // Declared so ethers can DECODE a settle() revert instead of surfacing
+  // "unknown custom error" — the browser then shows the real cause rather
+  // than spinning for eight minutes blaming the weather oracle.
+  "error NoSuchPolicy()",
+  "error AlreadySettled()",
+  "error EvidenceMissing()",
+  "error InvalidFdcProof()",
+  "error WrongAttestationType()",
+  "error RequestMismatch()",
+  "error InsufficientPool()",
 ];
+
+/** Map a ClaimPayout settle() revert to a plain, judge-readable reason. */
+function settleRevertReason(error: unknown): string | null {
+  const e = error as { code?: string; revert?: { name?: string }; shortMessage?: string; info?: unknown };
+  const name = e?.revert?.name;
+  switch (name) {
+    case "InsufficientPool":
+      return "The demo payout pool is temporarily empty — it is being topped up. Try again shortly.";
+    case "AlreadySettled":
+      return "This policy has already been settled.";
+    case "EvidenceMissing":
+      return "No approved evidence is on-chain for this policy yet — file a claim first.";
+    case "RequestMismatch":
+      return "The weather request did not match this policy's pinned parameters.";
+    case "WrongAttestationType":
+    case "InvalidFdcProof":
+      return "The Flare Data Connector proof did not verify on-chain. Retry the settlement.";
+    case "NoSuchPolicy":
+      return "That policy does not exist on the contract.";
+    default:
+      // A genuine contract revert (CALL_EXCEPTION) with no decoded name is
+      // still permanent — do not let the caller treat it as a transient blip.
+      return e?.code === "CALL_EXCEPTION"
+        ? "The settlement transaction reverted on-chain. Retry the settlement."
+        : null;
+  }
+}
+
+const DA_FETCH_TIMEOUT_MS = 12_000;
+
+async function fetchJson(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function provider(): JsonRpcProvider {
   return new JsonRpcProvider(process.env.FLARE_RPC_URL ?? DEFAULT_RPC, 114, { staticNetwork: true });
@@ -81,28 +130,38 @@ const toUtf8Hex32 = (s: string) => zeroPadBytes(hexlify(toUtf8Bytes(s)), 32);
 /** Step 1: prepare the attestation request and submit it to FdcHub. */
 export async function startSettlement(policyId: number): Promise<SettlementTicket> {
   const c = claims();
+  // Refuse to spend the FDC fee on a request that settle() would only reject.
+  const policy = await c.policies(policyId);
+  if (policy.settled) throw new Error("This policy has already been settled.");
+  if (!policy.evidenceApproved) {
+    throw new Error("No approved evidence is on-chain for this policy — file a claim first.");
+  }
   const [apiUrl, queryParams] = await Promise.all([
     c.WEATHER_API_URL(),
     c.expectedQueryParams(policyId),
   ]);
 
-  const prepared = await fetch(VERIFIER_URL, {
-    method: "POST",
-    headers: { "X-API-KEY": VERIFIER_API_KEY, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      attestationType: toUtf8Hex32("Web2Json"),
-      sourceId: toUtf8Hex32("PublicWeb2"),
-      requestBody: {
-        url: apiUrl,
-        httpMethod: "GET",
-        headers: "{}",
-        queryParams,
-        body: "{}",
-        postProcessJq: POST_PROCESS_JQ,
-        abiSignature: ABI_SIGNATURE,
-      },
-    }),
-  });
+  const prepared = await fetchJson(
+    VERIFIER_URL,
+    {
+      method: "POST",
+      headers: { "X-API-KEY": VERIFIER_API_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        attestationType: toUtf8Hex32("Web2Json"),
+        sourceId: toUtf8Hex32("PublicWeb2"),
+        requestBody: {
+          url: apiUrl,
+          httpMethod: "GET",
+          headers: "{}",
+          queryParams,
+          body: "{}",
+          postProcessJq: POST_PROCESS_JQ,
+          abiSignature: ABI_SIGNATURE,
+        },
+      }),
+    },
+    DA_FETCH_TIMEOUT_MS,
+  );
   const prepJson = (await prepared.json()) as { abiEncodedRequest?: string; status?: string };
   if (!prepJson.abiEncodedRequest) {
     throw new Error(`Verifier rejected the request: ${prepJson.status ?? "unknown"}`);
@@ -133,6 +192,26 @@ export async function startSettlement(policyId: number): Promise<SettlementTicke
 
 /** Step 2 (repeat until settled): check finalization, fetch proof, settle. */
 export async function pollSettlement(ticket: SettlementTicket): Promise<SettlementPoll> {
+  // Terminal-state pre-check BEFORE any FDC work: if the policy is already
+  // settled or has no approved evidence, the eventual settle() would revert —
+  // catch it now and return a clear reason instead of burning a round.
+  const readClaims = claims();
+  const policy = await readClaims.policies(ticket.policyId);
+  if (policy.settled) {
+    return {
+      state: "settled",
+      precipitationMmE2: 0,
+      triggered: policy.paidOut,
+      paidWei: policy.paidWei.toString(),
+      evidenceAttested: policy.evidenceAttested,
+      txUrl: "",
+      proofRound: ticket.roundId,
+    };
+  }
+  if (!policy.evidenceApproved) {
+    return { state: "failed", reason: "No approved evidence is on-chain for this policy — file a claim first." };
+  }
+
   const fdcVerification = await flareContract("FdcVerification", [
     "function fdcProtocolId() view returns (uint8)",
   ]);
@@ -147,11 +226,15 @@ export async function pollSettlement(ticket: SettlementTicket): Promise<Settleme
   let proof: { response_hex?: string; proof?: string[] } = {};
   let proofRound = ticket.roundId;
   for (const r of [ticket.roundId, ticket.roundId + 1, ticket.roundId + 2, ticket.roundId + 3]) {
-    const res = await fetch(DA_LAYER_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ votingRoundId: r, requestBytes: ticket.abiEncodedRequest }),
-    });
+    const res = await fetchJson(
+      DA_LAYER_URL,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ votingRoundId: r, requestBytes: ticket.abiEncodedRequest }),
+      },
+      DA_FETCH_TIMEOUT_MS,
+    );
     const j = (await res.json().catch(() => ({}))) as { response_hex?: string; proof?: string[] };
     if (j.response_hex) {
       proof = j;
@@ -181,8 +264,19 @@ export async function pollSettlement(ticket: SettlementTicket): Promise<Settleme
   };
 
   const c = claims(true);
-  const tx = await c.settle(ticket.policyId, { merkleProof: proof.proof, data });
-  const receipt = await tx.wait();
+  let tx: { hash: string; wait: () => Promise<{ logs: Array<{ topics: ReadonlyArray<string>; data: string }> }> };
+  let receipt: { logs: Array<{ topics: ReadonlyArray<string>; data: string }> };
+  try {
+    tx = await c.settle(ticket.policyId, { merkleProof: proof.proof, data });
+    receipt = await tx.wait();
+  } catch (error: unknown) {
+    const reason = settleRevertReason(error);
+    // A decoded/CALL_EXCEPTION revert is permanent → surface it and stop.
+    // Anything else (RPC blip mid-send) is left to throw so the caller's
+    // transient path retries.
+    if (reason) return { state: "failed", reason };
+    throw error;
+  }
 
   let precipitationMmE2 = 0;
   let triggered = false;
