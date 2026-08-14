@@ -2,7 +2,7 @@ import { randomInt } from "node:crypto";
 import { fail } from "@/lib/api";
 import { adjusterConfigured, getPolicy } from "@/lib/adjuster";
 import { makeClaimPhoto } from "@/lib/claim-photo";
-import { contentHash, perceptualHash } from "@/lib/hash";
+import { contentHash, isDegeneratePerceptualHash, perceptualHash } from "@/lib/hash";
 import { NEAR_MATCH_MAX_DISTANCE } from "@/lib/registry";
 import { getStore } from "@/lib/store";
 
@@ -43,6 +43,9 @@ export async function GET(req: Request): Promise<Response> {
 
       const jpeg = await makeClaimPhoto({ lat, lon, when, seed });
       const [sha, phash] = [contentHash(jpeg), await perceptualHash(jpeg)];
+      // The enclave rejects featureless fingerprints as uncomparable — a
+      // sample the demo's own verifier refuses must never leave this route.
+      if (isDegeneratePerceptualHash(phash)) continue;
       const exact = await store.findByContentHash(sha);
       const near = exact ? null : await store.findNearest(phash, NEAR_MATCH_MAX_DISTANCE);
       const match = exact ?? near?.record ?? null;
