@@ -41,7 +41,7 @@ and the claims friction are real.
   - `/claim` — the claimant flow: photo → enclave verdict → on-chain evidence → FDC weather → payout
   - `/desk` — the insurer's live view of the chain (policies, attestation state, pool)
 - Live enclave (real Confidential Space, Intel TDX): **https://tee.agentarc.online/health**
-- Demo video: **[LINK — record and paste]**
+- Demo video: **https://youtu.be/bIeLQex-MwI**
 
 No wallet or login needed — the demo relays transactions so a judge can run a full
 claim from a browser in under two minutes. Sample claim photos are generated

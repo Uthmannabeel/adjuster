@@ -9,7 +9,7 @@
 
 > A manual damage claim costs the insurer **$300–900** and takes the claimant **10–30 days**. Adjuster settled one on-chain for **under $0.01 in gas, in ~4 minutes** — without any human ever seeing the photograph.
 
-**Live demo:** [adjuster.agentarc.online](https://adjuster.agentarc.online) · **Live enclave:** [tee.agentarc.online/health](https://tee.agentarc.online/health) · **Work ledger:** [docs/work-ledger.md](docs/work-ledger.md)
+**Live demo:** [adjuster.agentarc.online](https://adjuster.agentarc.online) · **Video:** [youtu.be/bIeLQex-MwI](https://youtu.be/bIeLQex-MwI) · **Live enclave:** [tee.agentarc.online/health](https://tee.agentarc.online/health) · **Work ledger:** [docs/work-ledger.md](docs/work-ledger.md)
 
 Built for the **Flare Summer Signal** hackathon — *Confidential Compute Apps* bounty.
 
